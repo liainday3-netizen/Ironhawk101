@@ -1,0 +1,27 @@
+kind = "web"
+previewPath = "/"
+title = "IronHawk DEX Matrix"
+version = "1.0.0"
+id = "artifacts/dex-matrix"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 18581
+
+[services.development]
+run = "pnpm --filter @workspace/dex-matrix run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/dex-matrix", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/dex-matrix/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "18581"
+BASE_PATH = "/"

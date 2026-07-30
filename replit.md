@@ -1,45 +1,61 @@
-# [Project name]
+# IronHawk DEX Matrix
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+A multi-chain DEX trading terminal with the IronHawk Microstructure Matrix signal engine. Tracks capital scaling from $10 across Solana, Ethereum, Base, and Bitcoin (WBTC), with order-block/CHOCH signal detection ported from the MQ5 quantitative scanner.
 
 ## Run & Operate
 
-- `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
+- `pnpm --filter @workspace/dex-matrix run dev` — run the frontend (port assigned by workflow)
+- `pnpm --filter @workspace/api-server run dev` — run the API server
 - `pnpm run typecheck` — full typecheck across all packages
 - `pnpm run build` — typecheck + build all packages
-- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
+- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas
 - `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
+- Required env: `DATABASE_URL` — Postgres connection string, `SESSION_SECRET`
 
 ## Stack
 
 - pnpm workspaces, Node.js 24, TypeScript 5.9
+- Frontend: React + Vite, Tailwind CSS, shadcn/ui, Recharts, Wouter
 - API: Express 5
 - DB: PostgreSQL + Drizzle ORM
-- Validation: Zod (`zod/v4`), `drizzle-zod`
+- Validation: Zod (v4), drizzle-zod
 - API codegen: Orval (from OpenAPI spec)
-- Build: esbuild (CJS bundle)
+- Wallets: MetaMask (EVM) + Phantom (Solana) via window.ethereum / window.solana
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `artifacts/dex-matrix/` — React frontend (trading terminal UI)
+- `artifacts/api-server/src/routes/` — API routes: trades, signals, portfolio, watchlist
+- `lib/api-spec/openapi.yaml` — OpenAPI contract (source of truth)
+- `lib/db/src/schema/` — Drizzle schema: trades, signals, capital_snapshots, watchlist
+- `attached_assets/Microstructure_Matrix_1785374221638.mq5` — original MQ5 signal logic
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- Frontend-first DEX integration: wallet connection and price feeds are purely client-side via public RPCs and DeFiLlama's free coins API — no API keys required
+- Backend is thin persistence only: stores trade history, capital snapshots, signal history, and watchlist; all trading logic runs in the browser
+- Starting capital hardcoded at $10 in the portfolio summary route — update `artifacts/api-server/src/routes/portfolio.ts` to change
+- All integer columns in OpenAPI spec use `type: number` (not `type: integer`) to avoid Zod v3 `.int()` codegen errors
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+- **Dashboard**: Portfolio capital tracker ($10 → current), chain allocation breakdown, active buy/sell signals, recent trade log
+- **Trade Panel**: Multi-wallet connector (MetaMask + Phantom), token selector, position sizing, DEX swap execution (Uniswap V3 / Jupiter)
+- **Signal Scanner**: IronHawk Microstructure Matrix — order-block detection, fractal CHOCH signals, volume z-score, color-coded states
+- **Portfolio**: Capital growth chart, chain allocation donut, win rate, PnL history
+- **Watchlist**: Token monitoring across all chains
+- **Trade History**: Full trade log with signal context and tx hashes
 
 ## User preferences
 
-_Populate as you build — explicit user instructions worth remembering across sessions._
+- Dark mode only — this is a trading terminal, no light mode toggle
+- No emojis in the UI
+- Chains: Solana, Ethereum, Base, Bitcoin (WBTC)
+- Starting capital: $10
 
 ## Gotchas
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
-
-## Pointers
-
-- See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details
+- After any OpenAPI spec change, run codegen before touching routes or frontend hooks
+- `type: integer` in OpenAPI causes `zod.int()` errors (Zod v3) — use `type: number` everywhere
+- Numeric DB columns (numeric/decimal) are returned as strings from Drizzle — always `Number()` them before sending to the client
+- Express 5: `req.params.id` is `string | string[]` — always handle both cases before parseInt

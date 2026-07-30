@@ -1,22 +1,28 @@
 openapi: 3.1.0
 info:
-  # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: IronHawk DEX Matrix API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: trades
+    description: Trade history
+  - name: portfolio
+    description: Portfolio and capital tracking
+  - name: signals
+    description: Scanner signal history
+  - name: watchlist
+    description: Token watchlist
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,13 +30,417 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /trades:
+    get:
+      operationId: listTrades
+      tags: [trades]
+      summary: List all recorded trades
+      responses:
+        "200":
+          description: Trade list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Trade"
+    post:
+      operationId: createTrade
+      tags: [trades]
+      summary: Record a trade
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TradeInput"
+      responses:
+        "201":
+          description: Trade recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Trade"
+
+  /trades/recent:
+    get:
+      operationId: listRecentTrades
+      tags: [trades]
+      summary: Last 10 trades with PnL
+      responses:
+        "200":
+          description: Recent trades
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Trade"
+
+  /trades/{id}:
+    delete:
+      operationId: deleteTrade
+      tags: [trades]
+      summary: Remove a trade record
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: number
+      responses:
+        "204":
+          description: Deleted
+
+  /portfolio/summary:
+    get:
+      operationId: getPortfolioSummary
+      tags: [portfolio]
+      summary: Capital summary — total balance, PnL, ROI from $10 base
+      responses:
+        "200":
+          description: Portfolio summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PortfolioSummary"
+
+  /portfolio/snapshots:
+    get:
+      operationId: listCapitalSnapshots
+      tags: [portfolio]
+      summary: Capital growth over time
+      responses:
+        "200":
+          description: Capital snapshots
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CapitalSnapshot"
+    post:
+      operationId: createCapitalSnapshot
+      tags: [portfolio]
+      summary: Record a capital snapshot
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CapitalSnapshotInput"
+      responses:
+        "201":
+          description: Snapshot saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CapitalSnapshot"
+
+  /signals:
+    get:
+      operationId: listSignals
+      tags: [signals]
+      summary: Recent scanner signals
+      responses:
+        "200":
+          description: Signal history
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Signal"
+    post:
+      operationId: createSignal
+      tags: [signals]
+      summary: Record a scanner signal
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SignalInput"
+      responses:
+        "201":
+          description: Signal recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Signal"
+
+  /signals/active:
+    get:
+      operationId: listActiveSignals
+      tags: [signals]
+      summary: Currently active buy/sell signals
+      responses:
+        "200":
+          description: Active signals
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Signal"
+
+  /watchlist:
+    get:
+      operationId: listWatchlist
+      tags: [watchlist]
+      summary: Tokens being monitored
+      responses:
+        "200":
+          description: Watchlist
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/WatchlistItem"
+    post:
+      operationId: addWatchlistItem
+      tags: [watchlist]
+      summary: Add token to watchlist
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WatchlistItemInput"
+      responses:
+        "201":
+          description: Added
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WatchlistItem"
+
+  /watchlist/{id}:
+    delete:
+      operationId: removeWatchlistItem
+      tags: [watchlist]
+      summary: Remove from watchlist
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: number
+      responses:
+        "204":
+          description: Removed
+
 components:
   schemas:
     HealthStatus:
       type: object
+      required: [status]
       properties:
         status:
           type: string
-      required:
-        - status
 
+    Trade:
+      type: object
+      required: [id, chain, tokenSymbol, side, entryPriceUsd, amountUsd, txHash, createdAt]
+      properties:
+        id:
+          type: number
+        chain:
+          type: string
+          description: "solana | ethereum | base | bitcoin"
+        tokenSymbol:
+          type: string
+        tokenAddress:
+          type: ["string", "null"]
+        side:
+          type: string
+          description: "buy | sell"
+        entryPriceUsd:
+          type: number
+        exitPriceUsd:
+          type: ["number", "null"]
+        amountUsd:
+          type: number
+        pnlUsd:
+          type: ["number", "null"]
+        pnlPercent:
+          type: ["number", "null"]
+        txHash:
+          type: string
+        signalState:
+          type: ["string", "null"]
+          description: "The IronHawk signal state that triggered this trade"
+        createdAt:
+          type: string
+
+    TradeInput:
+      type: object
+      required: [chain, tokenSymbol, side, entryPriceUsd, amountUsd, txHash]
+      properties:
+        chain:
+          type: string
+        tokenSymbol:
+          type: string
+        tokenAddress:
+          type: ["string", "null"]
+        side:
+          type: string
+        entryPriceUsd:
+          type: number
+        exitPriceUsd:
+          type: ["number", "null"]
+        amountUsd:
+          type: number
+        pnlUsd:
+          type: ["number", "null"]
+        pnlPercent:
+          type: ["number", "null"]
+        txHash:
+          type: string
+        signalState:
+          type: ["string", "null"]
+
+    PortfolioSummary:
+      type: object
+      required: [startingCapitalUsd, currentCapitalUsd, totalPnlUsd, roiPercent, totalTrades, winRate, chainBreakdown]
+      properties:
+        startingCapitalUsd:
+          type: number
+        currentCapitalUsd:
+          type: number
+        totalPnlUsd:
+          type: number
+        roiPercent:
+          type: number
+        totalTrades:
+          type: number
+        winRate:
+          type: number
+        chainBreakdown:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChainBalance"
+
+    ChainBalance:
+      type: object
+      required: [chain, balanceUsd, allocation]
+      properties:
+        chain:
+          type: string
+        balanceUsd:
+          type: number
+        allocation:
+          type: number
+
+    CapitalSnapshot:
+      type: object
+      required: [id, totalUsd, createdAt]
+      properties:
+        id:
+          type: number
+        totalUsd:
+          type: number
+        solBalanceUsd:
+          type: ["number", "null"]
+        ethBalanceUsd:
+          type: ["number", "null"]
+        baseBalanceUsd:
+          type: ["number", "null"]
+        btcBalanceUsd:
+          type: ["number", "null"]
+        createdAt:
+          type: string
+
+    CapitalSnapshotInput:
+      type: object
+      required: [totalUsd]
+      properties:
+        totalUsd:
+          type: number
+        solBalanceUsd:
+          type: ["number", "null"]
+        ethBalanceUsd:
+          type: ["number", "null"]
+        baseBalanceUsd:
+          type: ["number", "null"]
+        btcBalanceUsd:
+          type: ["number", "null"]
+
+    Signal:
+      type: object
+      required: [id, asset, chain, state, ltfMessage, htfMessage, createdAt]
+      properties:
+        id:
+          type: number
+        asset:
+          type: string
+        chain:
+          type: string
+        state:
+          type: string
+          description: "BULL_EXEC | BEAR_EXEC | IN_HTF_POI | OUT_OF_SESSION | FILTERED_BIAS | WAITING"
+        ltfMessage:
+          type: string
+        htfMessage:
+          type: string
+        obHigh:
+          type: ["number", "null"]
+        obLow:
+          type: ["number", "null"]
+        volumeZScore:
+          type: ["number", "null"]
+        createdAt:
+          type: string
+
+    SignalInput:
+      type: object
+      required: [asset, chain, state, ltfMessage, htfMessage]
+      properties:
+        asset:
+          type: string
+        chain:
+          type: string
+        state:
+          type: string
+        ltfMessage:
+          type: string
+        htfMessage:
+          type: string
+        obHigh:
+          type: ["number", "null"]
+        obLow:
+          type: ["number", "null"]
+        volumeZScore:
+          type: ["number", "null"]
+
+    WatchlistItem:
+      type: object
+      required: [id, chain, tokenSymbol, tokenAddress, addedAt]
+      properties:
+        id:
+          type: number
+        chain:
+          type: string
+        tokenSymbol:
+          type: string
+        tokenAddress:
+          type: string
+        notes:
+          type: ["string", "null"]
+        addedAt:
+          type: string
+
+    WatchlistItemInput:
+      type: object
+      required: [chain, tokenSymbol, tokenAddress]
+      properties:
+        chain:
+          type: string
+        tokenSymbol:
+          type: string
+        tokenAddress:
+          type: string
+        notes:
+          type: ["string", "null"]
