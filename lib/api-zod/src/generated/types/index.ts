@@ -3,17 +3,27 @@
  * Do not edit manually.
  * Api
  * IronHawk DEX Matrix API
- * OpenAPI spec version: 0.1.0
+ * OpenAPI spec version: 0.2.0
  */
 
-export * from './capitalSnapshot';
-export * from './capitalSnapshotInput';
-export * from './chainBalance';
+export * from './addPairInput';
+export * from './candle';
+export * from './capitalSummary';
+export * from './closePositionInput';
+export * from './closeResult';
+export * from './executeResult';
+export * from './executeSignalInput';
+export * from './getCandlesParams';
+export * from './getTrendingPairsParams';
 export * from './healthStatus';
-export * from './portfolioSummary';
+export * from './listPositionsParams';
+export * from './listSignalsParams';
+export * from './marketPair';
+export * from './performanceSummary';
+export * from './position';
+export * from './scannerStats';
+export * from './scannerStatsChainBreakdown';
+export * from './searchPairsParams';
 export * from './signal';
-export * from './signalInput';
-export * from './trade';
-export * from './tradeInput';
-export * from './watchlistItem';
-export * from './watchlistItemInput';
+export * from './updateCapitalInput';
+export * from './watchedPair';

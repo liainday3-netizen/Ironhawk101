@@ -3,7 +3,7 @@
  * Do not edit manually.
  * Api
  * IronHawk DEX Matrix API
- * OpenAPI spec version: 0.1.0
+ * OpenAPI spec version: 0.2.0
  */
 import * as zod from 'zod';
 
@@ -17,251 +17,342 @@ export const HealthCheckResponse = zod.object({
 
 
 /**
- * @summary List all recorded trades
+ * @summary List all actively watched pairs with their microstructure state
  */
-export const ListTradesResponseItem = zod.object({
+export const ListPairsResponseItem = zod.object({
   "id": zod.number(),
-  "chain": zod.string().describe('solana | ethereum | base | bitcoin'),
-  "tokenSymbol": zod.string(),
-  "tokenAddress": zod.string().nullish(),
-  "side": zod.string().describe('buy | sell'),
-  "entryPriceUsd": zod.number(),
-  "exitPriceUsd": zod.number().nullish(),
-  "amountUsd": zod.number(),
-  "pnlUsd": zod.number().nullish(),
-  "pnlPercent": zod.number().nullish(),
-  "txHash": zod.string(),
-  "signalState": zod.string().nullish().describe('The IronHawk signal state that triggered this trade'),
-  "createdAt": zod.string()
-})
-export const ListTradesResponse = zod.array(ListTradesResponseItem)
-
-
-/**
- * @summary Record a trade
- */
-export const CreateTradeBody = zod.object({
+  "symbol": zod.string(),
+  "baseToken": zod.string(),
+  "quoteToken": zod.string(),
   "chain": zod.string(),
-  "tokenSymbol": zod.string(),
-  "tokenAddress": zod.string().nullish(),
-  "side": zod.string(),
-  "entryPriceUsd": zod.number(),
-  "exitPriceUsd": zod.number().nullish(),
-  "amountUsd": zod.number(),
-  "pnlUsd": zod.number().nullish(),
-  "pnlPercent": zod.number().nullish(),
-  "txHash": zod.string(),
-  "signalState": zod.string().nullish()
+  "dex": zod.string(),
+  "pairAddress": zod.string(),
+  "state": zod.string().describe('WAITING | IN_HTF_POI | BULL_EXEC | BEAR_EXEC | FILTERED_BIAS | OUT_OF_SESSION | SYNC_ERROR'),
+  "htfMessage": zod.string(),
+  "ltfMessage": zod.string(),
+  "signalAction": zod.string(),
+  "currentPrice": zod.number(),
+  "priceChange24h": zod.number(),
+  "volume24h": zod.number(),
+  "obType": zod.string().nullish(),
+  "obHigh": zod.number().nullish(),
+  "obLow": zod.number().nullish(),
+  "lastScannedAt": zod.string().nullish(),
+  "addedAt": zod.string()
+})
+export const ListPairsResponse = zod.array(ListPairsResponseItem)
+
+
+/**
+ * @summary Add a DEX pair to the watchlist and trigger an immediate scan
+ */
+export const AddPairBody = zod.object({
+  "pairAddress": zod.string(),
+  "chain": zod.string(),
+  "customLabel": zod.string().optional()
 })
 
-export const CreateTradeResponse = zod.object({
+export const AddPairResponse = zod.object({
   "id": zod.number(),
-  "chain": zod.string().describe('solana | ethereum | base | bitcoin'),
-  "tokenSymbol": zod.string(),
-  "tokenAddress": zod.string().nullish(),
-  "side": zod.string().describe('buy | sell'),
-  "entryPriceUsd": zod.number(),
-  "exitPriceUsd": zod.number().nullish(),
-  "amountUsd": zod.number(),
-  "pnlUsd": zod.number().nullish(),
-  "pnlPercent": zod.number().nullish(),
-  "txHash": zod.string(),
-  "signalState": zod.string().nullish().describe('The IronHawk signal state that triggered this trade'),
-  "createdAt": zod.string()
+  "symbol": zod.string(),
+  "baseToken": zod.string(),
+  "quoteToken": zod.string(),
+  "chain": zod.string(),
+  "dex": zod.string(),
+  "pairAddress": zod.string(),
+  "state": zod.string().describe('WAITING | IN_HTF_POI | BULL_EXEC | BEAR_EXEC | FILTERED_BIAS | OUT_OF_SESSION | SYNC_ERROR'),
+  "htfMessage": zod.string(),
+  "ltfMessage": zod.string(),
+  "signalAction": zod.string(),
+  "currentPrice": zod.number(),
+  "priceChange24h": zod.number(),
+  "volume24h": zod.number(),
+  "obType": zod.string().nullish(),
+  "obHigh": zod.number().nullish(),
+  "obLow": zod.number().nullish(),
+  "lastScannedAt": zod.string().nullish(),
+  "addedAt": zod.string()
 })
 
 
 /**
- * @summary Last 10 trades with PnL
+ * @summary Remove a pair from the watchlist
  */
-export const ListRecentTradesResponseItem = zod.object({
-  "id": zod.number(),
-  "chain": zod.string().describe('solana | ethereum | base | bitcoin'),
-  "tokenSymbol": zod.string(),
-  "tokenAddress": zod.string().nullish(),
-  "side": zod.string().describe('buy | sell'),
-  "entryPriceUsd": zod.number(),
-  "exitPriceUsd": zod.number().nullish(),
-  "amountUsd": zod.number(),
-  "pnlUsd": zod.number().nullish(),
-  "pnlPercent": zod.number().nullish(),
-  "txHash": zod.string(),
-  "signalState": zod.string().nullish().describe('The IronHawk signal state that triggered this trade'),
-  "createdAt": zod.string()
-})
-export const ListRecentTradesResponse = zod.array(ListRecentTradesResponseItem)
-
-
-/**
- * @summary Remove a trade record
- */
-export const DeleteTradeParams = zod.object({
+export const RemovePairParams = zod.object({
   "id": zod.coerce.number()
 })
 
-export const DeleteTradeResponse = zod.void()
+export const RemovePairResponse = zod.void()
 
 
 /**
- * @summary Capital summary — total balance, PnL, ROI from $10 base
+ * @summary Signal execution history
  */
-export const GetPortfolioSummaryResponse = zod.object({
-  "startingCapitalUsd": zod.number(),
-  "currentCapitalUsd": zod.number(),
-  "totalPnlUsd": zod.number(),
-  "roiPercent": zod.number(),
-  "totalTrades": zod.number(),
-  "winRate": zod.number(),
-  "chainBreakdown": zod.array(zod.object({
-  "chain": zod.string(),
-  "balanceUsd": zod.number(),
-  "allocation": zod.number()
-}))
+export const ListSignalsQueryParams = zod.object({
+  "limit": zod.coerce.number().optional()
 })
 
-
-/**
- * @summary Capital growth over time
- */
-export const ListCapitalSnapshotsResponseItem = zod.object({
-  "id": zod.number(),
-  "totalUsd": zod.number(),
-  "solBalanceUsd": zod.number().nullish(),
-  "ethBalanceUsd": zod.number().nullish(),
-  "baseBalanceUsd": zod.number().nullish(),
-  "btcBalanceUsd": zod.number().nullish(),
-  "createdAt": zod.string()
-})
-export const ListCapitalSnapshotsResponse = zod.array(ListCapitalSnapshotsResponseItem)
-
-
-/**
- * @summary Record a capital snapshot
- */
-export const CreateCapitalSnapshotBody = zod.object({
-  "totalUsd": zod.number(),
-  "solBalanceUsd": zod.number().nullish(),
-  "ethBalanceUsd": zod.number().nullish(),
-  "baseBalanceUsd": zod.number().nullish(),
-  "btcBalanceUsd": zod.number().nullish()
-})
-
-export const CreateCapitalSnapshotResponse = zod.object({
-  "id": zod.number(),
-  "totalUsd": zod.number(),
-  "solBalanceUsd": zod.number().nullish(),
-  "ethBalanceUsd": zod.number().nullish(),
-  "baseBalanceUsd": zod.number().nullish(),
-  "btcBalanceUsd": zod.number().nullish(),
-  "createdAt": zod.string()
-})
-
-
-/**
- * @summary Recent scanner signals
- */
 export const ListSignalsResponseItem = zod.object({
   "id": zod.number(),
-  "asset": zod.string(),
+  "pairId": zod.number(),
+  "symbol": zod.string(),
   "chain": zod.string(),
-  "state": zod.string().describe('BULL_EXEC | BEAR_EXEC | IN_HTF_POI | OUT_OF_SESSION | FILTERED_BIAS | WAITING'),
+  "dex": zod.string(),
+  "direction": zod.string().describe('BUY | SELL'),
+  "price": zod.number(),
+  "obHigh": zod.number(),
+  "obLow": zod.number(),
   "ltfMessage": zod.string(),
-  "htfMessage": zod.string(),
-  "obHigh": zod.number().nullish(),
-  "obLow": zod.number().nullish(),
-  "volumeZScore": zod.number().nullish(),
-  "createdAt": zod.string()
+  "triggeredAt": zod.string()
 })
 export const ListSignalsResponse = zod.array(ListSignalsResponseItem)
 
 
 /**
- * @summary Record a scanner signal
+ * @summary Aggregate scanner stats — pair counts, signal counts, chain breakdown
  */
-export const CreateSignalBody = zod.object({
-  "asset": zod.string(),
-  "chain": zod.string(),
-  "state": zod.string(),
-  "ltfMessage": zod.string(),
-  "htfMessage": zod.string(),
-  "obHigh": zod.number().nullish(),
-  "obLow": zod.number().nullish(),
-  "volumeZScore": zod.number().nullish()
-})
-
-export const CreateSignalResponse = zod.object({
-  "id": zod.number(),
-  "asset": zod.string(),
-  "chain": zod.string(),
-  "state": zod.string().describe('BULL_EXEC | BEAR_EXEC | IN_HTF_POI | OUT_OF_SESSION | FILTERED_BIAS | WAITING'),
-  "ltfMessage": zod.string(),
-  "htfMessage": zod.string(),
-  "obHigh": zod.number().nullish(),
-  "obLow": zod.number().nullish(),
-  "volumeZScore": zod.number().nullish(),
-  "createdAt": zod.string()
+export const GetScannerStatsResponse = zod.object({
+  "totalPairs": zod.number(),
+  "activeBull": zod.number(),
+  "activeBear": zod.number(),
+  "inPoi": zod.number(),
+  "waiting": zod.number(),
+  "filteredBias": zod.number(),
+  "outOfSession": zod.number(),
+  "signalsToday": zod.number(),
+  "signalsTotal": zod.number(),
+  "chainBreakdown": zod.record(zod.string(), zod.number())
 })
 
 
 /**
- * @summary Currently active buy/sell signals
+ * @summary Search DEX pairs by symbol or contract address (DexScreener)
  */
-export const ListActiveSignalsResponseItem = zod.object({
-  "id": zod.number(),
-  "asset": zod.string(),
+export const SearchPairsQueryParams = zod.object({
+  "q": zod.coerce.string(),
+  "chain": zod.coerce.string().optional()
+})
+
+export const SearchPairsResponseItem = zod.object({
+  "pairAddress": zod.string(),
+  "symbol": zod.string(),
+  "baseToken": zod.string(),
+  "quoteToken": zod.string(),
   "chain": zod.string(),
-  "state": zod.string().describe('BULL_EXEC | BEAR_EXEC | IN_HTF_POI | OUT_OF_SESSION | FILTERED_BIAS | WAITING'),
-  "ltfMessage": zod.string(),
-  "htfMessage": zod.string(),
+  "dex": zod.string(),
+  "price": zod.number(),
+  "priceChange24h": zod.number(),
+  "volume24h": zod.number(),
+  "liquidity": zod.number(),
+  "txns24h": zod.number()
+})
+export const SearchPairsResponse = zod.array(SearchPairsResponseItem)
+
+
+/**
+ * @summary Trending DEX pools (GeckoTerminal)
+ */
+export const GetTrendingPairsQueryParams = zod.object({
+  "chain": zod.coerce.string().optional()
+})
+
+export const GetTrendingPairsResponseItem = zod.object({
+  "pairAddress": zod.string(),
+  "symbol": zod.string(),
+  "baseToken": zod.string(),
+  "quoteToken": zod.string(),
+  "chain": zod.string(),
+  "dex": zod.string(),
+  "price": zod.number(),
+  "priceChange24h": zod.number(),
+  "volume24h": zod.number(),
+  "liquidity": zod.number(),
+  "txns24h": zod.number()
+})
+export const GetTrendingPairsResponse = zod.array(GetTrendingPairsResponseItem)
+
+
+/**
+ * @summary OHLCV candles for a pair (GeckoTerminal)
+ */
+export const GetCandlesQueryParams = zod.object({
+  "pairAddress": zod.coerce.string(),
+  "chain": zod.coerce.string(),
+  "timeframe": zod.coerce.string().optional()
+})
+
+export const GetCandlesResponseItem = zod.object({
+  "time": zod.number(),
+  "open": zod.number(),
+  "high": zod.number(),
+  "low": zod.number(),
+  "close": zod.number(),
+  "volume": zod.number()
+})
+export const GetCandlesResponse = zod.array(GetCandlesResponseItem)
+
+
+/**
+ * @summary List trading positions
+ */
+export const ListPositionsQueryParams = zod.object({
+  "status": zod.coerce.string().optional(),
+  "chain": zod.coerce.string().optional()
+})
+
+export const ListPositionsResponseItem = zod.object({
+  "id": zod.number(),
+  "pairId": zod.number(),
+  "signalId": zod.number().nullish(),
+  "symbol": zod.string(),
+  "chain": zod.string(),
+  "dex": zod.string(),
+  "direction": zod.string(),
+  "status": zod.string(),
+  "entryPrice": zod.number(),
+  "entryAmountUsd": zod.number(),
+  "tokenAmountIn": zod.number(),
+  "tokenAmountOut": zod.number(),
+  "entryTxHash": zod.string().nullish(),
+  "capitalAtEntry": zod.number(),
+  "riskPct": zod.number(),
+  "exitPrice": zod.number().nullish(),
+  "exitAmountUsd": zod.number().nullish(),
+  "exitTxHash": zod.string().nullish(),
+  "realizedPnlUsd": zod.number().nullish(),
+  "realizedPnlPct": zod.number().nullish(),
+  "tpLevels": zod.string().nullish(),
+  "stopLossPrice": zod.number().nullish(),
+  "stopLossPct": zod.number().nullish(),
   "obHigh": zod.number().nullish(),
   "obLow": zod.number().nullish(),
-  "volumeZScore": zod.number().nullish(),
-  "createdAt": zod.string()
-})
-export const ListActiveSignalsResponse = zod.array(ListActiveSignalsResponseItem)
-
-
-/**
- * @summary Tokens being monitored
- */
-export const ListWatchlistResponseItem = zod.object({
-  "id": zod.number(),
-  "chain": zod.string(),
-  "tokenSymbol": zod.string(),
-  "tokenAddress": zod.string(),
-  "notes": zod.string().nullish(),
-  "addedAt": zod.string()
-})
-export const ListWatchlistResponse = zod.array(ListWatchlistResponseItem)
-
-
-/**
- * @summary Add token to watchlist
- */
-export const AddWatchlistItemBody = zod.object({
-  "chain": zod.string(),
-  "tokenSymbol": zod.string(),
-  "tokenAddress": zod.string(),
+  "walletAddress": zod.string().nullish(),
+  "openedAt": zod.string(),
+  "closedAt": zod.string().nullish(),
   "notes": zod.string().nullish()
 })
-
-export const AddWatchlistItemResponse = zod.object({
-  "id": zod.number(),
-  "chain": zod.string(),
-  "tokenSymbol": zod.string(),
-  "tokenAddress": zod.string(),
-  "notes": zod.string().nullish(),
-  "addedAt": zod.string()
-})
+export const ListPositionsResponse = zod.array(ListPositionsResponseItem)
 
 
 /**
- * @summary Remove from watchlist
+ * @summary Close a position (partial or full)
  */
-export const RemoveWatchlistItemParams = zod.object({
+export const ClosePositionParams = zod.object({
   "id": zod.coerce.number()
 })
 
-export const RemoveWatchlistItemResponse = zod.void()
+export const ClosePositionBody = zod.object({
+  "pctToClose": zod.number()
+})
+
+export const ClosePositionResponse = zod.object({
+  "success": zod.boolean(),
+  "pnlUsd": zod.number().nullish(),
+  "txHash": zod.string().nullish(),
+  "error": zod.string().nullish()
+})
+
+
+/**
+ * @summary Execute a trade signal on-chain
+ */
+export const ExecuteSignalBody = zod.object({
+  "pairId": zod.number(),
+  "direction": zod.string(),
+  "tokenAddress": zod.string(),
+  "tokenDecimals": zod.number().optional()
+})
+
+export const ExecuteSignalResponse = zod.object({
+  "success": zod.boolean(),
+  "positionId": zod.number().nullish(),
+  "txHash": zod.string().nullish(),
+  "positionSizeUsd": zod.number().nullish(),
+  "error": zod.string().nullish()
+})
+
+
+/**
+ * @summary Capital config and performance per chain
+ */
+export const GetCapitalResponseItem = zod.object({
+  "chain": zod.string(),
+  "initialCapital": zod.number(),
+  "currentCapital": zod.number(),
+  "totalPnlUsd": zod.number(),
+  "totalReturnPct": zod.number(),
+  "totalTrades": zod.number(),
+  "winRate": zod.number(),
+  "wins": zod.number(),
+  "losses": zod.number(),
+  "scalingTier": zod.string(),
+  "riskPct": zod.number(),
+  "nextPositionSizeUsd": zod.number(),
+  "autoExecute": zod.boolean(),
+  "walletAddress": zod.string().nullish()
+})
+export const GetCapitalResponse = zod.array(GetCapitalResponseItem)
+
+
+/**
+ * @summary Update capital config for a chain
+ */
+export const UpdateCapitalBody = zod.object({
+  "chain": zod.string(),
+  "initialCapitalUsd": zod.number().optional(),
+  "riskPct": zod.number().optional(),
+  "maxRiskPct": zod.number().optional(),
+  "stopLossPct": zod.number().optional(),
+  "maxPositionUsd": zod.number().optional(),
+  "maxConcurrentPositions": zod.number().optional(),
+  "autoExecute": zod.boolean().optional(),
+  "walletAddress": zod.string().optional()
+})
+
+export const UpdateCapitalResponse = zod.object({
+  "chain": zod.string(),
+  "initialCapital": zod.number(),
+  "currentCapital": zod.number(),
+  "totalPnlUsd": zod.number(),
+  "totalReturnPct": zod.number(),
+  "totalTrades": zod.number(),
+  "winRate": zod.number(),
+  "wins": zod.number(),
+  "losses": zod.number(),
+  "scalingTier": zod.string(),
+  "riskPct": zod.number(),
+  "nextPositionSizeUsd": zod.number(),
+  "autoExecute": zod.boolean(),
+  "walletAddress": zod.string().nullish()
+})
+
+
+/**
+ * @summary Aggregate performance across all chains
+ */
+export const GetPerformanceResponse = zod.object({
+  "chains": zod.array(zod.object({
+  "chain": zod.string(),
+  "initialCapital": zod.number(),
+  "currentCapital": zod.number(),
+  "totalPnlUsd": zod.number(),
+  "totalReturnPct": zod.number(),
+  "totalTrades": zod.number(),
+  "winRate": zod.number(),
+  "wins": zod.number(),
+  "losses": zod.number(),
+  "scalingTier": zod.string(),
+  "riskPct": zod.number(),
+  "nextPositionSizeUsd": zod.number(),
+  "autoExecute": zod.boolean(),
+  "walletAddress": zod.string().nullish()
+})),
+  "totalPnlUsd": zod.number(),
+  "totalReturnPct": zod.number(),
+  "totalTrades": zod.number(),
+  "winRate": zod.number(),
+  "openPositions": zod.number(),
+  "bestChain": zod.string().nullish()
+})
 
 

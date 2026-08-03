@@ -1,22 +1,20 @@
 openapi: 3.1.0
 info:
   title: Api
-  version: 0.1.0
+  version: 0.2.0
   description: IronHawk DEX Matrix API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
-    description: Health operations
-  - name: trades
-    description: Trade history
-  - name: portfolio
-    description: Portfolio and capital tracking
-  - name: signals
-    description: Scanner signal history
-  - name: watchlist
-    description: Token watchlist
+    description: Health check
+  - name: scanner
+    description: Pair watchlist and microstructure signal engine
+  - name: market
+    description: DEX market discovery and OHLCV data
+  - name: trader
+    description: Positions, capital scaling, and execution
 paths:
   /healthz:
     get:
@@ -31,197 +29,45 @@ paths:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
 
-  /trades:
+  /scanner/pairs:
     get:
-      operationId: listTrades
-      tags: [trades]
-      summary: List all recorded trades
+      operationId: listPairs
+      tags: [scanner]
+      summary: List all actively watched pairs with their microstructure state
       responses:
         "200":
-          description: Trade list
+          description: Watched pairs
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/Trade"
+                  $ref: "#/components/schemas/WatchedPair"
     post:
-      operationId: createTrade
-      tags: [trades]
-      summary: Record a trade
+      operationId: addPair
+      tags: [scanner]
+      summary: Add a DEX pair to the watchlist and trigger an immediate scan
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/TradeInput"
+              $ref: "#/components/schemas/AddPairInput"
       responses:
         "201":
-          description: Trade recorded
+          description: Pair added
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Trade"
+                $ref: "#/components/schemas/WatchedPair"
+        "409":
+          description: Already watched
 
-  /trades/recent:
-    get:
-      operationId: listRecentTrades
-      tags: [trades]
-      summary: Last 10 trades with PnL
-      responses:
-        "200":
-          description: Recent trades
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/Trade"
-
-  /trades/{id}:
+  /scanner/pairs/{id}:
     delete:
-      operationId: deleteTrade
-      tags: [trades]
-      summary: Remove a trade record
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: number
-      responses:
-        "204":
-          description: Deleted
-
-  /portfolio/summary:
-    get:
-      operationId: getPortfolioSummary
-      tags: [portfolio]
-      summary: Capital summary — total balance, PnL, ROI from $10 base
-      responses:
-        "200":
-          description: Portfolio summary
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/PortfolioSummary"
-
-  /portfolio/snapshots:
-    get:
-      operationId: listCapitalSnapshots
-      tags: [portfolio]
-      summary: Capital growth over time
-      responses:
-        "200":
-          description: Capital snapshots
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/CapitalSnapshot"
-    post:
-      operationId: createCapitalSnapshot
-      tags: [portfolio]
-      summary: Record a capital snapshot
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CapitalSnapshotInput"
-      responses:
-        "201":
-          description: Snapshot saved
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/CapitalSnapshot"
-
-  /signals:
-    get:
-      operationId: listSignals
-      tags: [signals]
-      summary: Recent scanner signals
-      responses:
-        "200":
-          description: Signal history
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/Signal"
-    post:
-      operationId: createSignal
-      tags: [signals]
-      summary: Record a scanner signal
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/SignalInput"
-      responses:
-        "201":
-          description: Signal recorded
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Signal"
-
-  /signals/active:
-    get:
-      operationId: listActiveSignals
-      tags: [signals]
-      summary: Currently active buy/sell signals
-      responses:
-        "200":
-          description: Active signals
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/Signal"
-
-  /watchlist:
-    get:
-      operationId: listWatchlist
-      tags: [watchlist]
-      summary: Tokens being monitored
-      responses:
-        "200":
-          description: Watchlist
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/WatchlistItem"
-    post:
-      operationId: addWatchlistItem
-      tags: [watchlist]
-      summary: Add token to watchlist
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/WatchlistItemInput"
-      responses:
-        "201":
-          description: Added
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/WatchlistItem"
-
-  /watchlist/{id}:
-    delete:
-      operationId: removeWatchlistItem
-      tags: [watchlist]
-      summary: Remove from watchlist
+      operationId: removePair
+      tags: [scanner]
+      summary: Remove a pair from the watchlist
       parameters:
         - name: id
           in: path
@@ -232,6 +78,227 @@ paths:
         "204":
           description: Removed
 
+  /scanner/signals:
+    get:
+      operationId: listSignals
+      tags: [scanner]
+      summary: Signal execution history
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: number
+      responses:
+        "200":
+          description: Signals
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Signal"
+
+  /scanner/stats:
+    get:
+      operationId: getScannerStats
+      tags: [scanner]
+      summary: Aggregate scanner stats — pair counts, signal counts, chain breakdown
+      responses:
+        "200":
+          description: Stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScannerStats"
+
+  /market/search:
+    get:
+      operationId: searchPairs
+      tags: [market]
+      summary: Search DEX pairs by symbol or contract address (DexScreener)
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: chain
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Search results
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/MarketPair"
+
+  /market/trending:
+    get:
+      operationId: getTrendingPairs
+      tags: [market]
+      summary: Trending DEX pools (GeckoTerminal)
+      parameters:
+        - name: chain
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Trending pairs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/MarketPair"
+
+  /market/candles:
+    get:
+      operationId: getCandles
+      tags: [market]
+      summary: OHLCV candles for a pair (GeckoTerminal)
+      parameters:
+        - name: pairAddress
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: chain
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: timeframe
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OHLCV candles
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Candle"
+
+  /trader/positions:
+    get:
+      operationId: listPositions
+      tags: [trader]
+      summary: List trading positions
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+        - name: chain
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Positions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Position"
+
+  /trader/positions/{id}/close:
+    post:
+      operationId: closePosition
+      tags: [trader]
+      summary: Close a position (partial or full)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: number
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClosePositionInput"
+      responses:
+        "200":
+          description: Close result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CloseResult"
+
+  /trader/execute:
+    post:
+      operationId: executeSignal
+      tags: [trader]
+      summary: Execute a trade signal on-chain
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExecuteSignalInput"
+      responses:
+        "200":
+          description: Execution result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExecuteResult"
+
+  /trader/capital:
+    get:
+      operationId: getCapital
+      tags: [trader]
+      summary: Capital config and performance per chain
+      responses:
+        "200":
+          description: Capital summaries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CapitalSummary"
+    patch:
+      operationId: updateCapital
+      tags: [trader]
+      summary: Update capital config for a chain
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateCapitalInput"
+      responses:
+        "200":
+          description: Updated summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CapitalSummary"
+
+  /trader/performance:
+    get:
+      operationId: getPerformance
+      tags: [trader]
+      summary: Aggregate performance across all chains
+      responses:
+        "200":
+          description: Performance summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PerformanceSummary"
+
 components:
   schemas:
     HealthStatus:
@@ -241,206 +308,344 @@ components:
         status:
           type: string
 
-    Trade:
+    WatchedPair:
       type: object
-      required: [id, chain, tokenSymbol, side, entryPriceUsd, amountUsd, txHash, createdAt]
+      required: [id, symbol, baseToken, quoteToken, chain, dex, pairAddress, state, htfMessage, ltfMessage, signalAction, currentPrice, priceChange24h, volume24h, addedAt]
       properties:
         id:
           type: number
+        symbol:
+          type: string
+        baseToken:
+          type: string
+        quoteToken:
+          type: string
         chain:
           type: string
-          description: "solana | ethereum | base | bitcoin"
-        tokenSymbol:
+        dex:
           type: string
-        tokenAddress:
-          type: ["string", "null"]
-        side:
+        pairAddress:
           type: string
-          description: "buy | sell"
-        entryPriceUsd:
+        state:
+          type: string
+          description: "WAITING | IN_HTF_POI | BULL_EXEC | BEAR_EXEC | FILTERED_BIAS | OUT_OF_SESSION | SYNC_ERROR"
+        htfMessage:
+          type: string
+        ltfMessage:
+          type: string
+        signalAction:
+          type: string
+        currentPrice:
           type: number
-        exitPriceUsd:
-          type: ["number", "null"]
-        amountUsd:
+        priceChange24h:
           type: number
-        pnlUsd:
-          type: ["number", "null"]
-        pnlPercent:
-          type: ["number", "null"]
-        txHash:
-          type: string
-        signalState:
+        volume24h:
+          type: number
+        obType:
           type: ["string", "null"]
-          description: "The IronHawk signal state that triggered this trade"
-        createdAt:
+        obHigh:
+          type: ["number", "null"]
+        obLow:
+          type: ["number", "null"]
+        lastScannedAt:
+          type: ["string", "null"]
+        addedAt:
           type: string
 
-    TradeInput:
+    AddPairInput:
       type: object
-      required: [chain, tokenSymbol, side, entryPriceUsd, amountUsd, txHash]
+      required: [pairAddress, chain]
+      properties:
+        pairAddress:
+          type: string
+        chain:
+          type: string
+        customLabel:
+          type: string
+
+    Signal:
+      type: object
+      required: [id, pairId, symbol, chain, dex, direction, price, obHigh, obLow, ltfMessage, triggeredAt]
+      properties:
+        id:
+          type: number
+        pairId:
+          type: number
+        symbol:
+          type: string
+        chain:
+          type: string
+        dex:
+          type: string
+        direction:
+          type: string
+          description: "BUY | SELL"
+        price:
+          type: number
+        obHigh:
+          type: number
+        obLow:
+          type: number
+        ltfMessage:
+          type: string
+        triggeredAt:
+          type: string
+
+    ScannerStats:
+      type: object
+      required: [totalPairs, activeBull, activeBear, inPoi, waiting, filteredBias, outOfSession, signalsToday, signalsTotal, chainBreakdown]
+      properties:
+        totalPairs:
+          type: number
+        activeBull:
+          type: number
+        activeBear:
+          type: number
+        inPoi:
+          type: number
+        waiting:
+          type: number
+        filteredBias:
+          type: number
+        outOfSession:
+          type: number
+        signalsToday:
+          type: number
+        signalsTotal:
+          type: number
+        chainBreakdown:
+          type: object
+          additionalProperties:
+            type: number
+
+    MarketPair:
+      type: object
+      required: [pairAddress, symbol, baseToken, quoteToken, chain, dex, price, priceChange24h, volume24h, liquidity, txns24h]
+      properties:
+        pairAddress:
+          type: string
+        symbol:
+          type: string
+        baseToken:
+          type: string
+        quoteToken:
+          type: string
+        chain:
+          type: string
+        dex:
+          type: string
+        price:
+          type: number
+        priceChange24h:
+          type: number
+        volume24h:
+          type: number
+        liquidity:
+          type: number
+        txns24h:
+          type: number
+
+    Candle:
+      type: object
+      required: [time, open, high, low, close, volume]
+      properties:
+        time:
+          type: number
+        open:
+          type: number
+        high:
+          type: number
+        low:
+          type: number
+        close:
+          type: number
+        volume:
+          type: number
+
+    Position:
+      type: object
+      required: [id, pairId, symbol, chain, dex, direction, status, entryPrice, entryAmountUsd, tokenAmountIn, tokenAmountOut, capitalAtEntry, riskPct, openedAt]
+      properties:
+        id:
+          type: number
+        pairId:
+          type: number
+        signalId:
+          type: ["number", "null"]
+        symbol:
+          type: string
+        chain:
+          type: string
+        dex:
+          type: string
+        direction:
+          type: string
+        status:
+          type: string
+        entryPrice:
+          type: number
+        entryAmountUsd:
+          type: number
+        tokenAmountIn:
+          type: number
+        tokenAmountOut:
+          type: number
+        entryTxHash:
+          type: ["string", "null"]
+        capitalAtEntry:
+          type: number
+        riskPct:
+          type: number
+        exitPrice:
+          type: ["number", "null"]
+        exitAmountUsd:
+          type: ["number", "null"]
+        exitTxHash:
+          type: ["string", "null"]
+        realizedPnlUsd:
+          type: ["number", "null"]
+        realizedPnlPct:
+          type: ["number", "null"]
+        tpLevels:
+          type: ["string", "null"]
+        stopLossPrice:
+          type: ["number", "null"]
+        stopLossPct:
+          type: ["number", "null"]
+        obHigh:
+          type: ["number", "null"]
+        obLow:
+          type: ["number", "null"]
+        walletAddress:
+          type: ["string", "null"]
+        openedAt:
+          type: string
+        closedAt:
+          type: ["string", "null"]
+        notes:
+          type: ["string", "null"]
+
+    ClosePositionInput:
+      type: object
+      required: [pctToClose]
+      properties:
+        pctToClose:
+          type: number
+
+    CloseResult:
+      type: object
+      required: [success]
+      properties:
+        success:
+          type: boolean
+        pnlUsd:
+          type: ["number", "null"]
+        txHash:
+          type: ["string", "null"]
+        error:
+          type: ["string", "null"]
+
+    ExecuteSignalInput:
+      type: object
+      required: [pairId, direction, tokenAddress]
+      properties:
+        pairId:
+          type: number
+        direction:
+          type: string
+        tokenAddress:
+          type: string
+        tokenDecimals:
+          type: number
+
+    ExecuteResult:
+      type: object
+      required: [success]
+      properties:
+        success:
+          type: boolean
+        positionId:
+          type: ["number", "null"]
+        txHash:
+          type: ["string", "null"]
+        positionSizeUsd:
+          type: ["number", "null"]
+        error:
+          type: ["string", "null"]
+
+    CapitalSummary:
+      type: object
+      required: [chain, initialCapital, currentCapital, totalPnlUsd, totalReturnPct, totalTrades, winRate, wins, losses, scalingTier, riskPct, nextPositionSizeUsd, autoExecute]
       properties:
         chain:
           type: string
-        tokenSymbol:
-          type: string
-        tokenAddress:
-          type: ["string", "null"]
-        side:
-          type: string
-        entryPriceUsd:
+        initialCapital:
           type: number
-        exitPriceUsd:
-          type: ["number", "null"]
-        amountUsd:
-          type: number
-        pnlUsd:
-          type: ["number", "null"]
-        pnlPercent:
-          type: ["number", "null"]
-        txHash:
-          type: string
-        signalState:
-          type: ["string", "null"]
-
-    PortfolioSummary:
-      type: object
-      required: [startingCapitalUsd, currentCapitalUsd, totalPnlUsd, roiPercent, totalTrades, winRate, chainBreakdown]
-      properties:
-        startingCapitalUsd:
-          type: number
-        currentCapitalUsd:
+        currentCapital:
           type: number
         totalPnlUsd:
           type: number
-        roiPercent:
+        totalReturnPct:
           type: number
         totalTrades:
           type: number
         winRate:
           type: number
-        chainBreakdown:
+        wins:
+          type: number
+        losses:
+          type: number
+        scalingTier:
+          type: string
+        riskPct:
+          type: number
+        nextPositionSizeUsd:
+          type: number
+        autoExecute:
+          type: boolean
+        walletAddress:
+          type: ["string", "null"]
+
+    UpdateCapitalInput:
+      type: object
+      required: [chain]
+      properties:
+        chain:
+          type: string
+        initialCapitalUsd:
+          type: number
+        riskPct:
+          type: number
+        maxRiskPct:
+          type: number
+        stopLossPct:
+          type: number
+        maxPositionUsd:
+          type: number
+        maxConcurrentPositions:
+          type: number
+        autoExecute:
+          type: boolean
+        walletAddress:
+          type: string
+
+    PerformanceSummary:
+      type: object
+      required: [chains, totalPnlUsd, totalReturnPct, totalTrades, winRate, openPositions]
+      properties:
+        chains:
           type: array
           items:
-            $ref: "#/components/schemas/ChainBalance"
-
-    ChainBalance:
-      type: object
-      required: [chain, balanceUsd, allocation]
-      properties:
-        chain:
-          type: string
-        balanceUsd:
+            $ref: "#/components/schemas/CapitalSummary"
+        totalPnlUsd:
           type: number
-        allocation:
+        totalReturnPct:
           type: number
-
-    CapitalSnapshot:
-      type: object
-      required: [id, totalUsd, createdAt]
-      properties:
-        id:
+        totalTrades:
           type: number
-        totalUsd:
+        winRate:
           type: number
-        solBalanceUsd:
-          type: ["number", "null"]
-        ethBalanceUsd:
-          type: ["number", "null"]
-        baseBalanceUsd:
-          type: ["number", "null"]
-        btcBalanceUsd:
-          type: ["number", "null"]
-        createdAt:
-          type: string
-
-    CapitalSnapshotInput:
-      type: object
-      required: [totalUsd]
-      properties:
-        totalUsd:
+        openPositions:
           type: number
-        solBalanceUsd:
-          type: ["number", "null"]
-        ethBalanceUsd:
-          type: ["number", "null"]
-        baseBalanceUsd:
-          type: ["number", "null"]
-        btcBalanceUsd:
-          type: ["number", "null"]
-
-    Signal:
-      type: object
-      required: [id, asset, chain, state, ltfMessage, htfMessage, createdAt]
-      properties:
-        id:
-          type: number
-        asset:
-          type: string
-        chain:
-          type: string
-        state:
-          type: string
-          description: "BULL_EXEC | BEAR_EXEC | IN_HTF_POI | OUT_OF_SESSION | FILTERED_BIAS | WAITING"
-        ltfMessage:
-          type: string
-        htfMessage:
-          type: string
-        obHigh:
-          type: ["number", "null"]
-        obLow:
-          type: ["number", "null"]
-        volumeZScore:
-          type: ["number", "null"]
-        createdAt:
-          type: string
-
-    SignalInput:
-      type: object
-      required: [asset, chain, state, ltfMessage, htfMessage]
-      properties:
-        asset:
-          type: string
-        chain:
-          type: string
-        state:
-          type: string
-        ltfMessage:
-          type: string
-        htfMessage:
-          type: string
-        obHigh:
-          type: ["number", "null"]
-        obLow:
-          type: ["number", "null"]
-        volumeZScore:
-          type: ["number", "null"]
-
-    WatchlistItem:
-      type: object
-      required: [id, chain, tokenSymbol, tokenAddress, addedAt]
-      properties:
-        id:
-          type: number
-        chain:
-          type: string
-        tokenSymbol:
-          type: string
-        tokenAddress:
-          type: string
-        notes:
-          type: ["string", "null"]
-        addedAt:
-          type: string
-
-    WatchlistItemInput:
-      type: object
-      required: [chain, tokenSymbol, tokenAddress]
-      properties:
-        chain:
-          type: string
-        tokenSymbol:
-          type: string
-        tokenAddress:
-          type: string
-        notes:
+        bestChain:
           type: ["string", "null"]

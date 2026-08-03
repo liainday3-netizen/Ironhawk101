@@ -3,11 +3,11 @@
  * Do not edit manually.
  * Api
  * IronHawk DEX Matrix API
- * OpenAPI spec version: 0.1.0
+ * OpenAPI spec version: 0.2.0
  */
 
-export interface ChainBalance {
+export interface AddPairInput {
+  pairAddress: string;
   chain: string;
-  balanceUsd: number;
-  allocation: number;
+  customLabel?: string;
 }

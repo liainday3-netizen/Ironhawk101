@@ -3,22 +3,20 @@
  * Do not edit manually.
  * Api
  * IronHawk DEX Matrix API
- * OpenAPI spec version: 0.1.0
+ * OpenAPI spec version: 0.2.0
  */
 
 export interface Signal {
   id: number;
-  asset: string;
+  pairId: number;
+  symbol: string;
   chain: string;
-  /** BULL_EXEC | BEAR_EXEC | IN_HTF_POI | OUT_OF_SESSION | FILTERED_BIAS | WAITING */
-  state: string;
+  dex: string;
+  /** BUY | SELL */
+  direction: string;
+  price: number;
+  obHigh: number;
+  obLow: number;
   ltfMessage: string;
-  htfMessage: string;
-  /** @nullable */
-  obHigh?: number | null;
-  /** @nullable */
-  obLow?: number | null;
-  /** @nullable */
-  volumeZScore?: number | null;
-  createdAt: string;
+  triggeredAt: string;
 }

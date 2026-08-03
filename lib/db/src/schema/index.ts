@@ -1,4 +1,4 @@
-export * from "./trades";
+export * from "./watchedPairs";
 export * from "./signals";
-export * from "./capital_snapshots";
-export * from "./watchlist";
+export * from "./positions";
+export * from "./capitalConfig";

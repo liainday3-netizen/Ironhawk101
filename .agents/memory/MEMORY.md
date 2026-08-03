@@ -1,0 +1,1 @@
+- [IronHawk Architecture](ironhawk-architecture.md) — full merge of user's GitHub repo; schema, routes, lib files, on-chain executors, scanner all replaced with repo versions.

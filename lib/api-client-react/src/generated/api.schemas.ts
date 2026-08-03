@@ -3,145 +3,240 @@
  * Do not edit manually.
  * Api
  * IronHawk DEX Matrix API
- * OpenAPI spec version: 0.1.0
+ * OpenAPI spec version: 0.2.0
  */
 export interface HealthStatus {
   status: string;
 }
 
-export interface Trade {
+export interface WatchedPair {
   id: number;
-  /** solana | ethereum | base | bitcoin */
+  symbol: string;
+  baseToken: string;
+  quoteToken: string;
   chain: string;
-  tokenSymbol: string;
+  dex: string;
+  pairAddress: string;
+  /** WAITING | IN_HTF_POI | BULL_EXEC | BEAR_EXEC | FILTERED_BIAS | OUT_OF_SESSION | SYNC_ERROR */
+  state: string;
+  htfMessage: string;
+  ltfMessage: string;
+  signalAction: string;
+  currentPrice: number;
+  priceChange24h: number;
+  volume24h: number;
   /** @nullable */
-  tokenAddress?: string | null;
-  /** buy | sell */
-  side: string;
-  entryPriceUsd: number;
+  obType?: string | null;
   /** @nullable */
-  exitPriceUsd?: number | null;
-  amountUsd: number;
+  obHigh?: number | null;
   /** @nullable */
-  pnlUsd?: number | null;
+  obLow?: number | null;
   /** @nullable */
-  pnlPercent?: number | null;
-  txHash: string;
-  /**
-     * The IronHawk signal state that triggered this trade
-     * @nullable
-     */
-  signalState?: string | null;
-  createdAt: string;
+  lastScannedAt?: string | null;
+  addedAt: string;
 }
 
-export interface TradeInput {
+export interface AddPairInput {
+  pairAddress: string;
   chain: string;
-  tokenSymbol: string;
-  /** @nullable */
-  tokenAddress?: string | null;
-  side: string;
-  entryPriceUsd: number;
-  /** @nullable */
-  exitPriceUsd?: number | null;
-  amountUsd: number;
-  /** @nullable */
-  pnlUsd?: number | null;
-  /** @nullable */
-  pnlPercent?: number | null;
-  txHash: string;
-  /** @nullable */
-  signalState?: string | null;
-}
-
-export interface ChainBalance {
-  chain: string;
-  balanceUsd: number;
-  allocation: number;
-}
-
-export interface PortfolioSummary {
-  startingCapitalUsd: number;
-  currentCapitalUsd: number;
-  totalPnlUsd: number;
-  roiPercent: number;
-  totalTrades: number;
-  winRate: number;
-  chainBreakdown: ChainBalance[];
-}
-
-export interface CapitalSnapshot {
-  id: number;
-  totalUsd: number;
-  /** @nullable */
-  solBalanceUsd?: number | null;
-  /** @nullable */
-  ethBalanceUsd?: number | null;
-  /** @nullable */
-  baseBalanceUsd?: number | null;
-  /** @nullable */
-  btcBalanceUsd?: number | null;
-  createdAt: string;
-}
-
-export interface CapitalSnapshotInput {
-  totalUsd: number;
-  /** @nullable */
-  solBalanceUsd?: number | null;
-  /** @nullable */
-  ethBalanceUsd?: number | null;
-  /** @nullable */
-  baseBalanceUsd?: number | null;
-  /** @nullable */
-  btcBalanceUsd?: number | null;
+  customLabel?: string;
 }
 
 export interface Signal {
   id: number;
-  asset: string;
+  pairId: number;
+  symbol: string;
   chain: string;
-  /** BULL_EXEC | BEAR_EXEC | IN_HTF_POI | OUT_OF_SESSION | FILTERED_BIAS | WAITING */
-  state: string;
+  dex: string;
+  /** BUY | SELL */
+  direction: string;
+  price: number;
+  obHigh: number;
+  obLow: number;
   ltfMessage: string;
-  htfMessage: string;
-  /** @nullable */
-  obHigh?: number | null;
-  /** @nullable */
-  obLow?: number | null;
-  /** @nullable */
-  volumeZScore?: number | null;
-  createdAt: string;
+  triggeredAt: string;
 }
 
-export interface SignalInput {
-  asset: string;
-  chain: string;
-  state: string;
-  ltfMessage: string;
-  htfMessage: string;
-  /** @nullable */
-  obHigh?: number | null;
-  /** @nullable */
-  obLow?: number | null;
-  /** @nullable */
-  volumeZScore?: number | null;
+export type ScannerStatsChainBreakdown = {[key: string]: number};
+
+export interface ScannerStats {
+  totalPairs: number;
+  activeBull: number;
+  activeBear: number;
+  inPoi: number;
+  waiting: number;
+  filteredBias: number;
+  outOfSession: number;
+  signalsToday: number;
+  signalsTotal: number;
+  chainBreakdown: ScannerStatsChainBreakdown;
 }
 
-export interface WatchlistItem {
+export interface MarketPair {
+  pairAddress: string;
+  symbol: string;
+  baseToken: string;
+  quoteToken: string;
+  chain: string;
+  dex: string;
+  price: number;
+  priceChange24h: number;
+  volume24h: number;
+  liquidity: number;
+  txns24h: number;
+}
+
+export interface Candle {
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+export interface Position {
   id: number;
+  pairId: number;
+  /** @nullable */
+  signalId?: number | null;
+  symbol: string;
   chain: string;
-  tokenSymbol: string;
-  tokenAddress: string;
+  dex: string;
+  direction: string;
+  status: string;
+  entryPrice: number;
+  entryAmountUsd: number;
+  tokenAmountIn: number;
+  tokenAmountOut: number;
+  /** @nullable */
+  entryTxHash?: string | null;
+  capitalAtEntry: number;
+  riskPct: number;
+  /** @nullable */
+  exitPrice?: number | null;
+  /** @nullable */
+  exitAmountUsd?: number | null;
+  /** @nullable */
+  exitTxHash?: string | null;
+  /** @nullable */
+  realizedPnlUsd?: number | null;
+  /** @nullable */
+  realizedPnlPct?: number | null;
+  /** @nullable */
+  tpLevels?: string | null;
+  /** @nullable */
+  stopLossPrice?: number | null;
+  /** @nullable */
+  stopLossPct?: number | null;
+  /** @nullable */
+  obHigh?: number | null;
+  /** @nullable */
+  obLow?: number | null;
+  /** @nullable */
+  walletAddress?: string | null;
+  openedAt: string;
+  /** @nullable */
+  closedAt?: string | null;
   /** @nullable */
   notes?: string | null;
-  addedAt: string;
 }
 
-export interface WatchlistItemInput {
-  chain: string;
-  tokenSymbol: string;
-  tokenAddress: string;
-  /** @nullable */
-  notes?: string | null;
+export interface ClosePositionInput {
+  pctToClose: number;
 }
+
+export interface CloseResult {
+  success: boolean;
+  /** @nullable */
+  pnlUsd?: number | null;
+  /** @nullable */
+  txHash?: string | null;
+  /** @nullable */
+  error?: string | null;
+}
+
+export interface ExecuteSignalInput {
+  pairId: number;
+  direction: string;
+  tokenAddress: string;
+  tokenDecimals?: number;
+}
+
+export interface ExecuteResult {
+  success: boolean;
+  /** @nullable */
+  positionId?: number | null;
+  /** @nullable */
+  txHash?: string | null;
+  /** @nullable */
+  positionSizeUsd?: number | null;
+  /** @nullable */
+  error?: string | null;
+}
+
+export interface CapitalSummary {
+  chain: string;
+  initialCapital: number;
+  currentCapital: number;
+  totalPnlUsd: number;
+  totalReturnPct: number;
+  totalTrades: number;
+  winRate: number;
+  wins: number;
+  losses: number;
+  scalingTier: string;
+  riskPct: number;
+  nextPositionSizeUsd: number;
+  autoExecute: boolean;
+  /** @nullable */
+  walletAddress?: string | null;
+}
+
+export interface UpdateCapitalInput {
+  chain: string;
+  initialCapitalUsd?: number;
+  riskPct?: number;
+  maxRiskPct?: number;
+  stopLossPct?: number;
+  maxPositionUsd?: number;
+  maxConcurrentPositions?: number;
+  autoExecute?: boolean;
+  walletAddress?: string;
+}
+
+export interface PerformanceSummary {
+  chains: CapitalSummary[];
+  totalPnlUsd: number;
+  totalReturnPct: number;
+  totalTrades: number;
+  winRate: number;
+  openPositions: number;
+  /** @nullable */
+  bestChain?: string | null;
+}
+
+export type ListSignalsParams = {
+limit?: number;
+};
+
+export type SearchPairsParams = {
+q: string;
+chain?: string;
+};
+
+export type GetTrendingPairsParams = {
+chain?: string;
+};
+
+export type GetCandlesParams = {
+pairAddress: string;
+chain: string;
+timeframe?: string;
+};
+
+export type ListPositionsParams = {
+status?: string;
+chain?: string;
+};
 
