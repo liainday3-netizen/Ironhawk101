@@ -2,6 +2,11 @@
  * EVM On-Chain Executor (Ethereum + Base)
  * Uses viem + Uniswap V3 Universal Router — no API keys.
  * Public RPC endpoints: publicnode.com
+ *
+ * Real swap logic:
+ * - QuoterV2 probes fee tiers [500, 3000, 10000] to find the live pool + quote
+ * - amountOutMinimum is set from the quote with slippage applied
+ * - Actual amountOut is parsed from the ERC-20 Transfer event on the output token
  */
 
 import {
@@ -29,6 +34,18 @@ const RPC_URLS: Record<string, string> = {
 const UNIVERSAL_ROUTER: Address = "0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD";
 const PERMIT2: Address = "0x000000000022D473030F116dDEE9F6B43aC78BA3";
 
+// Uniswap V3 QuoterV2 — used to find the best fee tier and get a real quote
+const QUOTER_V2: Record<string, Address> = {
+  ethereum: "0x61fFE014bA17989E743c5F6cB21bF9697530B21e",
+  base: "0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a",
+};
+
+// ERC-20 Transfer event topic
+const TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef" as Hex;
+
+// Pool fee tiers to probe (bps)
+const FEE_TIERS = [500, 3000, 10000] as const;
+
 const TOKENS: Record<string, Record<string, Address>> = {
   ethereum: {
     WETH: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
@@ -42,29 +59,36 @@ const TOKENS: Record<string, Record<string, Address>> = {
 };
 
 const ERC20_ABI = [
+  { name: "approve", type: "function", inputs: [{ name: "spender", type: "address" }, { name: "amount", type: "uint256" }], outputs: [{ name: "", type: "bool" }] },
+  { name: "balanceOf", type: "function", inputs: [{ name: "account", type: "address" }], outputs: [{ name: "", type: "uint256" }] },
+  { name: "decimals", type: "function", inputs: [], outputs: [{ name: "", type: "uint8" }] },
+  { name: "allowance", type: "function", inputs: [{ name: "owner", type: "address" }, { name: "spender", type: "address" }], outputs: [{ name: "", type: "uint256" }] },
+] as const;
+
+const QUOTER_V2_ABI = [
   {
-    name: "approve",
+    name: "quoteExactInputSingle",
     type: "function",
-    inputs: [{ name: "spender", type: "address" }, { name: "amount", type: "uint256" }],
-    outputs: [{ name: "", type: "bool" }],
-  },
-  {
-    name: "balanceOf",
-    type: "function",
-    inputs: [{ name: "account", type: "address" }],
-    outputs: [{ name: "", type: "uint256" }],
-  },
-  {
-    name: "decimals",
-    type: "function",
-    inputs: [],
-    outputs: [{ name: "", type: "uint8" }],
-  },
-  {
-    name: "allowance",
-    type: "function",
-    inputs: [{ name: "owner", type: "address" }, { name: "spender", type: "address" }],
-    outputs: [{ name: "", type: "uint256" }],
+    stateMutability: "nonpayable",
+    inputs: [
+      {
+        name: "params",
+        type: "tuple",
+        components: [
+          { name: "tokenIn", type: "address" },
+          { name: "tokenOut", type: "address" },
+          { name: "amountIn", type: "uint256" },
+          { name: "fee", type: "uint24" },
+          { name: "sqrtPriceLimitX96", type: "uint160" },
+        ],
+      },
+    ],
+    outputs: [
+      { name: "amountOut", type: "uint256" },
+      { name: "sqrtPriceX96After", type: "uint160" },
+      { name: "initializedTicksCrossed", type: "uint32" },
+      { name: "gasEstimate", type: "uint256" },
+    ],
   },
 ] as const;
 
@@ -73,6 +97,7 @@ export interface SwapResult {
   txHash?: string;
   amountIn: number;
   amountOut: number;
+  fee?: number;
   gasUsed?: number;
   error?: string;
 }
@@ -88,6 +113,78 @@ function getPrivateKey(chain: string): Hex | null {
     : process.env.EVM_WALLET_PRIVATE_KEY;
   if (!key) return null;
   return (key.startsWith("0x") ? key : `0x${key}`) as Hex;
+}
+
+/**
+ * Probe QuoterV2 across fee tiers to find the best pool and real output amount.
+ * Returns { fee, amountOut } for the best tier, or null if no pool found.
+ */
+async function getBestQuote(
+  chain: string,
+  tokenIn: Address,
+  tokenOut: Address,
+  amountIn: bigint,
+): Promise<{ fee: number; amountOut: bigint; outputDecimals: number } | null> {
+  const { viemChain, rpc } = getChainConfig(chain);
+  const quoter = QUOTER_V2[chain];
+  if (!quoter) return null;
+
+  const publicClient = createPublicClient({ chain: viemChain, transport: http(rpc) });
+
+  // Get output token decimals
+  let outputDecimals = 18;
+  try {
+    outputDecimals = Number(await publicClient.readContract({
+      address: tokenOut, abi: ERC20_ABI, functionName: "decimals",
+    }));
+  } catch { /* default 18 */ }
+
+  let bestFee = 0;
+  let bestOut = 0n;
+
+  for (const fee of FEE_TIERS) {
+    try {
+      const result = await publicClient.simulateContract({
+        address: quoter,
+        abi: QUOTER_V2_ABI,
+        functionName: "quoteExactInputSingle",
+        args: [{ tokenIn, tokenOut, amountIn, fee, sqrtPriceLimitX96: 0n }],
+      });
+      const amountOut = result.result[0] as bigint;
+      if (amountOut > bestOut) {
+        bestOut = amountOut;
+        bestFee = fee;
+      }
+    } catch { /* pool not found at this fee tier */ }
+  }
+
+  if (bestFee === 0 || bestOut === 0n) return null;
+  return { fee: bestFee, amountOut: bestOut, outputDecimals };
+}
+
+/**
+ * Parse the actual received amount from an ERC-20 Transfer event.
+ * Looks for Transfer(to=recipientAddress) on the output token in the tx receipt.
+ */
+function parseTransferAmountOut(
+  receipt: { logs: readonly { address: string; topics: readonly string[]; data: string }[] },
+  outputToken: Address,
+  recipient: Address,
+  decimals: number,
+): number {
+  const recipientPadded = recipient.toLowerCase().replace("0x", "").padStart(64, "0");
+  for (const log of receipt.logs) {
+    if (
+      log.address.toLowerCase() === outputToken.toLowerCase() &&
+      log.topics[0]?.toLowerCase() === TRANSFER_TOPIC.toLowerCase() &&
+      log.topics[2]?.toLowerCase().includes(recipientPadded)
+    ) {
+      try {
+        return Number(formatUnits(BigInt(log.data), decimals));
+      } catch { /* ignore parse error */ }
+    }
+  }
+  return 0;
 }
 
 export async function getWalletBalance(chain: string, tokenSymbol: string = "USDC"): Promise<number> {
@@ -117,8 +214,7 @@ export async function getWalletAddress(chain: string): Promise<string | null> {
   const key = getPrivateKey(chain);
   if (!key) return null;
   try {
-    const account = privateKeyToAccount(key);
-    return account.address;
+    return privateKeyToAccount(key).address;
   } catch {
     return null;
   }
@@ -144,6 +240,17 @@ export async function executeBuyEVM(
 
     const amountIn = parseUnits(amountUsd.toFixed(6), 6);
 
+    // --- Quote: find best fee tier and compute slippage-protected minimum ---
+    const quote = await getBestQuote(chain, usdcAddress, tokenAddress, amountIn);
+    if (!quote) {
+      return { success: false, amountIn: amountUsd, amountOut: 0, error: "No V3 pool found for this token on any fee tier" };
+    }
+    const slippageMultiplier = BigInt(Math.floor((1 - slippagePct / 100) * 10000));
+    const amountOutMinimum = (quote.amountOut * slippageMultiplier) / 10000n;
+
+    logger.info({ chain, tokenAddress, fee: quote.fee, amountIn: amountUsd, amountOutRaw: quote.amountOut.toString() }, "EVM BUY quote");
+
+    // --- Approve USDC to Permit2 if needed ---
     const allowance = await publicClient.readContract({
       address: usdcAddress, abi: ERC20_ABI, functionName: "allowance",
       args: [account.address, PERMIT2],
@@ -158,36 +265,30 @@ export async function executeBuyEVM(
       logger.info({ chain, approveTx }, "USDC approved to Permit2");
     }
 
+    // --- Execute swap via Universal Router V3_SWAP_EXACT_IN (command 0x00) ---
     const DEADLINE = BigInt(Math.floor(Date.now() / 1000) + 300);
     const swapParams = encodeAbiParameters(
       parseAbiParameters("address, address, uint24, address, uint256, uint256, uint160"),
-      [usdcAddress, tokenAddress, 3000, account.address, amountIn, 0n, 0n]
+      [usdcAddress, tokenAddress, quote.fee, account.address, amountIn, amountOutMinimum, 0n]
     );
 
     const txHash = await walletClient.writeContract({
       address: UNIVERSAL_ROUTER,
-      abi: [{
-        name: "execute",
-        type: "function",
-        inputs: [
-          { name: "commands", type: "bytes" },
-          { name: "inputs", type: "bytes[]" },
-          { name: "deadline", type: "uint256" },
-        ],
-        outputs: [],
-      }] as const,
+      abi: [{ name: "execute", type: "function", inputs: [{ name: "commands", type: "bytes" }, { name: "inputs", type: "bytes[]" }, { name: "deadline", type: "uint256" }], outputs: [] }] as const,
       functionName: "execute",
       args: ["0x00" as Hex, [swapParams], DEADLINE],
     });
 
     const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
-    logger.info({ chain, txHash, amountUsd }, "EVM BUY executed");
+    const actualOut = parseTransferAmountOut(receipt as any, tokenAddress, account.address, quote.outputDecimals);
 
+    logger.info({ chain, txHash, amountUsd, amountOut: actualOut, fee: quote.fee }, "EVM BUY executed");
     return {
       success: receipt.status === "success",
       txHash,
       amountIn: amountUsd,
-      amountOut: 0,
+      amountOut: actualOut,
+      fee: quote.fee,
       gasUsed: Number(receipt.gasUsed),
     };
   } catch (err: any) {
@@ -215,9 +316,19 @@ export async function executeSellEVM(
     const publicClient = createPublicClient({ chain: viemChain, transport: http(rpc) });
     const walletClient = createWalletClient({ account, chain: viemChain, transport: http(rpc) });
 
-    const amountIn = parseUnits(tokenAmount.toFixed(tokenDecimals), tokenDecimals);
-    const DEADLINE = BigInt(Math.floor(Date.now() / 1000) + 300);
+    const amountIn = parseUnits(tokenAmount.toFixed(tokenDecimals > 9 ? 9 : tokenDecimals), tokenDecimals);
 
+    // --- Quote: find best fee tier ---
+    const quote = await getBestQuote(chain, tokenAddress, usdcAddress, amountIn);
+    if (!quote) {
+      return { success: false, amountIn: tokenAmount, amountOut: 0, error: "No V3 pool found for this token on any fee tier" };
+    }
+    const slippageMultiplier = BigInt(Math.floor((1 - slippagePct / 100) * 10000));
+    const amountOutMinimum = (quote.amountOut * slippageMultiplier) / 10000n;
+
+    logger.info({ chain, tokenAddress, fee: quote.fee, tokenAmount, amountOutRaw: quote.amountOut.toString() }, "EVM SELL quote");
+
+    // --- Approve token to Permit2 if needed ---
     const allowance = await publicClient.readContract({
       address: tokenAddress, abi: ERC20_ABI, functionName: "allowance",
       args: [account.address, PERMIT2],
@@ -231,33 +342,30 @@ export async function executeSellEVM(
       await publicClient.waitForTransactionReceipt({ hash: approveTx });
     }
 
+    // --- Execute swap via Universal Router ---
+    const DEADLINE = BigInt(Math.floor(Date.now() / 1000) + 300);
     const swapParams = encodeAbiParameters(
       parseAbiParameters("address, address, uint24, address, uint256, uint256, uint160"),
-      [tokenAddress, usdcAddress, 3000, account.address, amountIn, 0n, 0n]
+      [tokenAddress, usdcAddress, quote.fee, account.address, amountIn, amountOutMinimum, 0n]
     );
 
     const txHash = await walletClient.writeContract({
       address: UNIVERSAL_ROUTER,
-      abi: [{
-        name: "execute",
-        type: "function",
-        inputs: [
-          { name: "commands", type: "bytes" },
-          { name: "inputs", type: "bytes[]" },
-          { name: "deadline", type: "uint256" },
-        ],
-        outputs: [],
-      }] as const,
+      abi: [{ name: "execute", type: "function", inputs: [{ name: "commands", type: "bytes" }, { name: "inputs", type: "bytes[]" }, { name: "deadline", type: "uint256" }], outputs: [] }] as const,
       functionName: "execute",
       args: ["0x00" as Hex, [swapParams], DEADLINE],
     });
 
     const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
+    const actualOut = parseTransferAmountOut(receipt as any, usdcAddress, account.address, 6);
+
+    logger.info({ chain, txHash, tokenAmount, amountOut: actualOut, fee: quote.fee }, "EVM SELL executed");
     return {
       success: receipt.status === "success",
       txHash,
       amountIn: tokenAmount,
-      amountOut: 0,
+      amountOut: actualOut,
+      fee: quote.fee,
       gasUsed: Number(receipt.gasUsed),
     };
   } catch (err: any) {

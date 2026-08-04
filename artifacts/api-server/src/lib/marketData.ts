@@ -15,7 +15,8 @@ export interface OHLCVCandle {
 export interface DexPair {
   pairAddress: string;
   symbol: string;
-  baseToken: string;
+  baseToken: string;           // symbol, e.g. "WETH"
+  baseTokenAddress: string;    // contract address
   quoteToken: string;
   chain: string;
   dex: string;
@@ -55,6 +56,7 @@ function parseDexScreenerPair(p: any, chain: string): DexPair {
     pairAddress: p.pairAddress ?? "",
     symbol: `${p.baseToken?.symbol ?? ""}/${p.quoteToken?.symbol ?? ""}`,
     baseToken: p.baseToken?.symbol ?? "",
+    baseTokenAddress: p.baseToken?.address ?? "",
     quoteToken: p.quoteToken?.symbol ?? "",
     chain: chain || (CHAIN_MAP[p.chainId] ? p.chainId : "ethereum"),
     dex: p.dexId ?? "",
@@ -95,10 +97,11 @@ export async function getTrendingPairs(chain: string = "ethereum"): Promise<DexP
     return {
       pairAddress: attr.address ?? p.id ?? "",
       symbol: attr.name ?? "",
-      baseToken: attr.base_token_price_usd ? attr.name?.split(" / ")?.[0] ?? "" : "",
+      baseToken: attr.name?.split(" / ")?.[0] ?? "",
+      baseTokenAddress: "",
       quoteToken: attr.name?.split(" / ")?.[1] ?? "USD",
       chain,
-      dex: attr.dex_id ?? attr.pool_created_at ?? "",
+      dex: attr.dex_id ?? "",
       price: parseFloat(attr.base_token_price_usd ?? "0") || 0,
       priceChange24h: parseFloat(attr.price_change_percentage?.h24 ?? "0") || 0,
       volume24h: parseFloat(attr.volume_usd?.h24 ?? "0") || 0,

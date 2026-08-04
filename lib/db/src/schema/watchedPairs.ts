@@ -8,7 +8,8 @@ export const watchedPairsTable = pgTable("watched_pairs", {
   chain: text("chain").notNull(), // ethereum | base | solana
   dex: text("dex").notNull().default(""),
   symbol: text("symbol").notNull().default(""),
-  baseToken: text("base_token").notNull().default(""),
+  baseToken: text("base_token").notNull().default(""),        // symbol e.g. "WETH"
+  baseTokenAddress: text("base_token_address").notNull().default(""), // contract address
   quoteToken: text("quote_token").notNull().default(""),
   customLabel: text("custom_label"),
 

@@ -1,10 +1,11 @@
 /**
  * IronHawk Scanner Service
  * Periodically fetches market data and runs microstructure analysis on all watched pairs.
+ * When autoExecute is enabled for a chain, fires on-chain swaps directly from here.
  */
 
-import { db, watchedPairsTable, signalsTable } from "@workspace/db";
-import { monitorPositions } from "./tradeExecutor";
+import { db, watchedPairsTable, signalsTable, capitalConfigTable } from "@workspace/db";
+import { monitorPositions, executeSignal } from "./tradeExecutor";
 import { eq, desc, sql } from "drizzle-orm";
 import { logger } from "./logger";
 import { getOHLCV, getPairInfo } from "./marketData";
@@ -35,9 +36,9 @@ export async function runScanCycle(): Promise<void> {
 
         const currentPrice = info?.price ?? pair.currentPrice;
         const prevState = pair.state;
-
         const result = analyzeAsset(htf4h, ltf15m, d1, currentPrice);
 
+        // Update pair state + market data; also persist baseTokenAddress if we got it
         await db
           .update(watchedPairsTable)
           .set({
@@ -54,6 +55,8 @@ export async function runScanCycle(): Promise<void> {
             dex: info?.dex || pair.dex,
             symbol: info?.symbol || pair.symbol,
             baseToken: info?.baseToken || pair.baseToken,
+            // Only overwrite baseTokenAddress if we got a real one
+            ...(info?.baseTokenAddress ? { baseTokenAddress: info.baseTokenAddress } : {}),
             quoteToken: info?.quoteToken || pair.quoteToken,
             lastScannedAt: new Date(),
           })
@@ -65,18 +68,34 @@ export async function runScanCycle(): Promise<void> {
 
         if (isNewSignal && result.obHigh !== null && result.obLow !== null) {
           const direction = result.state === "BULL_EXEC" ? "BUY" : "SELL";
-          await db.insert(signalsTable).values({
-            pairId: pair.id,
-            symbol: info?.symbol || pair.symbol,
-            chain: pair.chain,
-            dex: info?.dex || pair.dex,
+
+          const [insertedSignal] = await db
+            .insert(signalsTable)
+            .values({
+              pairId: pair.id,
+              symbol: info?.symbol || pair.symbol,
+              chain: pair.chain,
+              dex: info?.dex || pair.dex,
+              direction,
+              price: currentPrice,
+              obHigh: result.obHigh,
+              obLow: result.obLow,
+              ltfMessage: result.ltfMessage,
+            })
+            .returning();
+
+          logger.info({ symbol: pair.symbol, direction, price: currentPrice }, "Signal fired");
+
+          // --- Auto-execute: check if this chain has autoExecute enabled ---
+          await maybeAutoExecute({
+            pair: { ...pair, baseTokenAddress: info?.baseTokenAddress || pair.baseTokenAddress },
             direction,
-            price: currentPrice,
             obHigh: result.obHigh,
             obLow: result.obLow,
             ltfMessage: result.ltfMessage,
+            signalId: insertedSignal.id,
+            isBull: result.state === "BULL_EXEC",
           });
-          logger.info({ symbol: pair.symbol, direction, price: currentPrice }, "Signal fired");
         }
       } catch (err) {
         logger.error({ err, pairId: pair.id, symbol: pair.symbol }, "Error scanning pair");
@@ -97,6 +116,67 @@ export async function runScanCycle(): Promise<void> {
   } finally {
     isScanning = false;
   }
+}
+
+interface AutoExecuteOpts {
+  pair: { id: number; chain: string; baseTokenAddress: string };
+  direction: "BUY" | "SELL";
+  isBull: boolean;
+  obHigh: number;
+  obLow: number;
+  ltfMessage: string;
+  signalId: number;
+}
+
+async function maybeAutoExecute(opts: AutoExecuteOpts): Promise<void> {
+  const { pair, direction, isBull, obHigh, obLow, ltfMessage, signalId } = opts;
+
+  // Need a token address to execute — can't swap without it
+  if (!pair.baseTokenAddress) {
+    logger.warn({ pairId: pair.id, chain: pair.chain }, "Auto-execute skipped: no baseTokenAddress stored for this pair");
+    return;
+  }
+
+  let config;
+  try {
+    [config] = await db
+      .select()
+      .from(capitalConfigTable)
+      .where(eq(capitalConfigTable.chain, pair.chain));
+  } catch (err) {
+    logger.error({ err }, "Failed to fetch capital config for auto-execute");
+    return;
+  }
+
+  if (!config?.autoExecute) return;
+
+  // Respect directional filters
+  if (isBull && !config.onlyBullExec) return;
+  if (!isBull && !config.onlyBearExec) return;
+
+  logger.info(
+    { pairId: pair.id, chain: pair.chain, direction, tokenAddress: pair.baseTokenAddress },
+    "Auto-execute triggered"
+  );
+
+  // Fire and forget — don't block the scan cycle
+  executeSignal({
+    pairId: pair.id,
+    direction,
+    tokenAddress: pair.baseTokenAddress,
+    obHigh,
+    obLow,
+    ltfMessage,
+    signalId,
+  }).then((res) => {
+    if (res.success) {
+      logger.info({ positionId: res.positionId, txHash: res.txHash, sizeUsd: res.positionSizeUsd }, "Auto-execute: position opened");
+    } else {
+      logger.warn({ error: res.error }, "Auto-execute: execution failed");
+    }
+  }).catch((err) => {
+    logger.error({ err }, "Auto-execute: unhandled error");
+  });
 }
 
 export function startScanner(): void {
