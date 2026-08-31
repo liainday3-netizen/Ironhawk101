@@ -1,1 +1,2 @@
 - [IronHawk Architecture](ironhawk-architecture.md) — full merge of user's GitHub repo; schema, routes, lib files, on-chain executors, scanner all replaced with repo versions.
+- [Vite artifact build defaults](build-configs.md) — keep development env validation strict but provide build-only defaults outside managed workflows.

@@ -5,11 +5,12 @@ import { defineConfig } from 'vite';
 
 import runtimeErrorOverlay from '@replit/vite-plugin-runtime-error-modal';
 
-const rawPort = process.env.PORT;
+const isBuild = process.argv.includes('build');
+const rawPort = process.env.PORT ?? (isBuild ? '18581' : undefined);
 
 if (!rawPort) {
   throw new Error(
-    'PORT environment variable is required but was not provided.',
+    'PORT environment variable is required when running the DEX Matrix.',
   );
 }
 
@@ -19,11 +20,11 @@ if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
 
-const basePath = process.env.BASE_PATH;
+const basePath = process.env.BASE_PATH ?? (isBuild ? '/' : undefined);
 
 if (!basePath) {
   throw new Error(
-    'BASE_PATH environment variable is required but was not provided.',
+    'BASE_PATH environment variable is required when running the DEX Matrix.',
   );
 }
 
