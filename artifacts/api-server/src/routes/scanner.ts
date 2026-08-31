@@ -161,6 +161,12 @@ router.get("/scanner/signals", async (req, res) => {
       obHigh: s.obHigh,
       obLow: s.obLow,
       ltfMessage: s.ltfMessage,
+      marketRegime: s.marketRegime,
+      confidenceScore: s.confidenceScore,
+      atrPct: s.atrPct,
+      liquidityScore: s.liquidityScore,
+      adaptiveRiskPct: s.adaptiveRiskPct,
+      executionGuard: s.executionGuard,
       triggeredAt: s.triggeredAt.toISOString(),
     }))
   );

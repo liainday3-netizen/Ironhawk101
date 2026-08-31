@@ -18,5 +18,11 @@ export interface Signal {
   obHigh: number;
   obLow: number;
   ltfMessage: string;
+  marketRegime: string;
+  confidenceScore: number;
+  atrPct: number;
+  liquidityScore: number;
+  adaptiveRiskPct: number;
+  executionGuard: string;
   triggeredAt: string;
 }

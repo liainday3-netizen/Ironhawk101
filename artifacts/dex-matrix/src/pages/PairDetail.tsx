@@ -1,6 +1,6 @@
 import { useRoute, useLocation } from "wouter";
 import { useGetCandles, getGetCandlesQueryKey, useListPairs, getListPairsQueryKey, useRemovePair } from "@workspace/api-client-react";
-import { ComposedChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from "recharts";
+import { ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from "recharts";
 import { format } from "date-fns";
 import { ArrowLeft, Trash2, Activity, Target, TrendingUp, TrendingDown } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -130,8 +130,6 @@ export default function PairDetail() {
     }
   };
 
-  if (!pairAddress) return null;
-
   // ── Build chart data with candlestick + EMA ──────────────────────────────
   const chartData = useMemo(() => {
     if (!candles.length) return [];
@@ -169,6 +167,8 @@ export default function PairDetail() {
 
   const priceFormatter = (val: number) =>
     val === 0 ? "" : val < 0.0001 ? val.toExponential(2) : val > 1000 ? val.toFixed(0) : val > 1 ? val.toFixed(2) : val.toFixed(6);
+
+  if (!pairAddress) return null;
 
   return (
     <div className="flex flex-col h-full overflow-y-auto">
@@ -369,27 +369,8 @@ export default function PairDetail() {
                     maxBarSize={16}
                   />
 
-                  {/* EMA lines rendered as Bars with dot shape trick isn't ideal —
-                      use ReferenceLine per point... actually simpler: render as custom dots
-                      via a zero-height bar with label, OR use Scatter.
-                      Cleanest: use a dummy <Bar> with custom shape that draws just a dot */}
-                  {/* EMA9 — yellow */}
-                  <Bar
-                    yAxisId="price"
-                    dataKey="ema9"
-                    fill="transparent"
-                    stroke="none"
-                    isAnimationActive={false}
-                    legendType="none"
-                    shape={(props: any) => {
-                      const { x, width, payload } = props;
-                      if (!payload?.ema9) return null;
-                      const { yAxisId: _y, ...rest } = props;
-                      // We need pixel y — but we don't have scale here.
-                      // This approach doesn't work for lines. Skip and use a workaround.
-                      return null;
-                    }}
-                  />
+                  <Line yAxisId="price" type="monotone" dataKey="ema9" stroke="#facc15" strokeWidth={1} dot={false} connectNulls isAnimationActive={false} />
+                  <Line yAxisId="price" type="monotone" dataKey="ema20" stroke="#60a5fa" strokeWidth={1} dot={false} connectNulls isAnimationActive={false} />
                 </ComposedChart>
               </ResponsiveContainer>
             )}

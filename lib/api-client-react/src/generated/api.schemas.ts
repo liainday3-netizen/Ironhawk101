@@ -13,6 +13,7 @@ export interface WatchedPair {
   id: number;
   symbol: string;
   baseToken: string;
+  baseTokenAddress: string;
   quoteToken: string;
   chain: string;
   dex: string;
@@ -25,6 +26,15 @@ export interface WatchedPair {
   currentPrice: number;
   priceChange24h: number;
   volume24h: number;
+  /** CALM | NORMAL | VOLATILE | EXTREME | UNKNOWN */
+  marketRegime: string;
+  confidenceScore: number;
+  atrPct: number;
+  volatilityRatio: number;
+  liquidityScore: number;
+  adaptiveRiskPct: number;
+  adaptiveStopLossPct: number;
+  executionGuard: string;
   /** @nullable */
   obType?: string | null;
   /** @nullable */
@@ -54,6 +64,12 @@ export interface Signal {
   obHigh: number;
   obLow: number;
   ltfMessage: string;
+  marketRegime: string;
+  confidenceScore: number;
+  atrPct: number;
+  liquidityScore: number;
+  adaptiveRiskPct: number;
+  executionGuard: string;
   triggeredAt: string;
 }
 
@@ -67,6 +83,9 @@ export interface ScannerStats {
   waiting: number;
   filteredBias: number;
   outOfSession: number;
+  adaptiveBlocked: number;
+  volatileMarkets: number;
+  averageConfidence: number;
   signalsToday: number;
   signalsTotal: number;
   chainBreakdown: ScannerStatsChainBreakdown;
@@ -76,6 +95,7 @@ export interface MarketPair {
   pairAddress: string;
   symbol: string;
   baseToken: string;
+  baseTokenAddress: string;
   quoteToken: string;
   chain: string;
   dex: string;

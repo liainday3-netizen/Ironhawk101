@@ -15,6 +15,9 @@ export interface ScannerStats {
   waiting: number;
   filteredBias: number;
   outOfSession: number;
+  adaptiveBlocked: number;
+  volatileMarkets: number;
+  averageConfidence: number;
   signalsToday: number;
   signalsTotal: number;
   chainBreakdown: ScannerStatsChainBreakdown;

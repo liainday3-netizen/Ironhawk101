@@ -25,6 +25,10 @@ export interface PositionSizing {
   tpLevels: TakeProfitLevel[];
   capitalAtEntry: number;
   scalingTier: string;
+  marketRegime: string;
+  confidenceScore: number;
+  liquidityScore: number;
+  executionGuard: string;
 }
 
 export interface TakeProfitLevel {
@@ -54,7 +58,7 @@ function getScalingTier(capital: number): {
 }
 
 export const MIN_CAPITAL_USD = 10;
-export const MIN_POSITION_USD = 10;
+export const MIN_POSITION_USD = 1;
 
 export async function getOrCreateCapitalConfig(chain: string) {
   const existing = await db
@@ -85,11 +89,34 @@ export async function getOrCreateCapitalConfig(chain: string) {
   return created;
 }
 
-export async function calculatePositionSize(chain: string): Promise<PositionSizing> {
+export interface AdaptiveRiskContext {
+  marketRegime?: string;
+  confidenceScore?: number;
+  liquidityScore?: number;
+  suggestedStopLossPct?: number;
+  executionAllowed?: boolean;
+  executionGuard?: string;
+}
+
+export async function calculatePositionSize(
+  chain: string,
+  context: AdaptiveRiskContext = {},
+): Promise<PositionSizing> {
   const config = await getOrCreateCapitalConfig(chain);
   const tier = getScalingTier(config.currentCapitalUsd);
 
-  const riskPct = Math.min(config.riskPct, config.maxRiskPct);
+  const baseRiskPct = Math.min(config.riskPct, config.maxRiskPct);
+  const regimeMultiplier =
+    context.marketRegime === "EXTREME" ? 0 :
+    context.marketRegime === "VOLATILE" ? 0.5 :
+    context.marketRegime === "CALM" ? 0.9 : 1;
+  const confidenceMultiplier = context.confidenceScore
+    ? Math.max(0.5, Math.min(1, context.confidenceScore / 100))
+    : 1;
+  const liquidityMultiplier = context.liquidityScore
+    ? Math.max(0.5, Math.min(1, context.liquidityScore / 100))
+    : 1;
+  const riskPct = baseRiskPct * regimeMultiplier * confidenceMultiplier * liquidityMultiplier;
   const rawSize = config.currentCapitalUsd * (riskPct / 100);
   const positionSizeUsd = Math.max(MIN_POSITION_USD, Math.min(rawSize, config.maxPositionUsd));
 
@@ -102,6 +129,10 @@ export async function calculatePositionSize(chain: string): Promise<PositionSizi
     tpLevels,
     capitalAtEntry: config.currentCapitalUsd,
     scalingTier: tier.label,
+    marketRegime: context.marketRegime ?? "UNKNOWN",
+    confidenceScore: context.confidenceScore ?? 0,
+    liquidityScore: context.liquidityScore ?? 0,
+    executionGuard: context.executionGuard ?? "NOT_EVALUATED",
   };
 }
 

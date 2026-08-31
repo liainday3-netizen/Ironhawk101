@@ -10,6 +10,7 @@ export interface WatchedPair {
   id: number;
   symbol: string;
   baseToken: string;
+  baseTokenAddress: string;
   quoteToken: string;
   chain: string;
   dex: string;
@@ -22,6 +23,15 @@ export interface WatchedPair {
   currentPrice: number;
   priceChange24h: number;
   volume24h: number;
+  /** CALM | NORMAL | VOLATILE | EXTREME | UNKNOWN */
+  marketRegime: string;
+  confidenceScore: number;
+  atrPct: number;
+  volatilityRatio: number;
+  liquidityScore: number;
+  adaptiveRiskPct: number;
+  adaptiveStopLossPct: number;
+  executionGuard: string;
   /** @nullable */
   obType?: string | null;
   /** @nullable */

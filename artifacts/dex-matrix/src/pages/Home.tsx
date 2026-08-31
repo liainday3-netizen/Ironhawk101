@@ -20,6 +20,14 @@ const STATE_CONFIG: Record<string, { color: string; label: string; icon: any }> 
   SYNC_ERROR: { color: "text-red-400 bg-gray-800 border-gray-700", label: "SYNC ERROR", icon: AlertTriangle }
 };
 
+const REGIME_CONFIG: Record<string, { color: string; label: string }> = {
+  CALM: { color: "text-sky-400", label: "CALM" },
+  NORMAL: { color: "text-green-400", label: "NORMAL" },
+  VOLATILE: { color: "text-yellow-400", label: "VOLATILE" },
+  EXTREME: { color: "text-red-400", label: "EXTREME" },
+  UNKNOWN: { color: "text-muted-foreground", label: "CALIBRATING" },
+};
+
 export default function Home() {
   const { data: pairs = [], isLoading } = useListPairs({
     query: { refetchInterval: 10000, queryKey: getListPairsQueryKey() }
@@ -34,7 +42,7 @@ export default function Home() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold font-mono text-foreground tracking-tight">SCANNER_MATRIX</h1>
-          <p className="text-xs font-mono text-muted-foreground mt-1">IronHawk Microstructure Engine — HTF Order Block + LTF Fractal CHoCH + Volume Z-Score</p>
+          <p className="text-xs font-mono text-muted-foreground mt-1">Adaptive microstructure engine — regime detection + volatility-aware risk + liquidity guards</p>
         </div>
         <div className="text-xs font-mono text-muted-foreground flex gap-4">
           <span className="flex items-center gap-1"><div className="w-2 h-2 bg-green-500"></div> BULL</span>
@@ -44,11 +52,13 @@ export default function Home() {
       </div>
 
       <div className="border border-border bg-card overflow-hidden">
-        <div className="grid grid-cols-[1.5fr_1fr_1.5fr_2fr_1.5fr] gap-4 p-4 border-b border-border bg-secondary text-xs font-mono text-muted-foreground font-semibold">
+        <div className="grid grid-cols-[1.4fr_0.9fr_1fr_1fr_1.3fr_1fr] gap-4 p-4 border-b border-border bg-secondary text-xs font-mono text-muted-foreground font-semibold">
           <div>ASSET</div>
           <div className="text-right">PRICE / 24H</div>
+          <div>REGIME</div>
+          <div>CONFIDENCE</div>
           <div>HTF LOGIC</div>
-          <div>LTF FRACTAL LOGIC</div>
+          <div>RISK / GUARD</div>
           <div className="text-right">ACTION</div>
         </div>
 
@@ -80,7 +90,7 @@ function PairRow({ pair }: { pair: WatchedPair }) {
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0 }}
-      className="grid grid-cols-[1.5fr_1fr_1.5fr_2fr_1.5fr] gap-4 p-4 border-b border-border items-center hover:bg-secondary/50 transition-colors"
+      className="grid grid-cols-[1.4fr_0.9fr_1fr_1fr_1.3fr_1fr] gap-4 p-4 border-b border-border items-center hover:bg-secondary/50 transition-colors"
     >
       <Link href={`/pair/${pair.pairAddress}?chain=${pair.chain}`} className="contents">
         <div className="flex flex-col gap-1">
@@ -100,12 +110,43 @@ function PairRow({ pair }: { pair: WatchedPair }) {
           </span>
         </div>
 
+        <div className="flex flex-col gap-1 font-mono text-xs">
+          <span className={REGIME_CONFIG[pair.marketRegime || "UNKNOWN"]?.color || "text-muted-foreground"}>
+            {REGIME_CONFIG[pair.marketRegime || "UNKNOWN"]?.label || "CALIBRATING"}
+          </span>
+          <span className="text-[10px] text-muted-foreground">
+            ATR {pair.atrPct?.toFixed(2) ?? "0.00"}%
+          </span>
+        </div>
+
+        <div className="flex flex-col gap-1 font-mono text-xs">
+          <div className="flex items-center gap-2">
+            <span className={pair.confidenceScore >= 65 ? "text-green-500" : "text-yellow-400"}>
+              {pair.confidenceScore?.toFixed(0) ?? "0"}%
+            </span>
+            <div className="h-1 flex-1 min-w-[24px] bg-secondary">
+              <div
+                className={`h-full ${pair.confidenceScore >= 65 ? "bg-green-500" : "bg-yellow-400"}`}
+                style={{ width: `${Math.min(100, pair.confidenceScore || 0)}%` }}
+              />
+            </div>
+          </div>
+          <span className="text-[10px] text-muted-foreground">
+            LIQ {pair.liquidityScore?.toFixed(0) ?? "0"}
+          </span>
+        </div>
+
         <div className="font-mono text-xs text-muted-foreground truncate" title={pair.htfMessage}>
           {pair.htfMessage || "SYNCING..."}
         </div>
 
-        <div className="font-mono text-xs text-muted-foreground truncate" title={pair.ltfMessage}>
-          {pair.ltfMessage || "---"}
+        <div className="flex flex-col gap-1 font-mono text-xs truncate" title={pair.executionGuard}>
+          <span className={pair.executionGuard === "ADAPTIVE_GUARDS_CLEAR" ? "text-green-500" : "text-yellow-400"}>
+            {pair.adaptiveRiskPct?.toFixed(2) ?? "0.00"}% RISK
+          </span>
+          <span className="text-[10px] text-muted-foreground truncate">
+            {pair.executionGuard || "CALIBRATING"}
+          </span>
         </div>
 
         <div className="flex justify-end">

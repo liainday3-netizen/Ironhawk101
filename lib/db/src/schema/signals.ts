@@ -13,6 +13,12 @@ export const signalsTable = pgTable("signals", {
   obHigh: real("ob_high").notNull(),
   obLow: real("ob_low").notNull(),
   ltfMessage: text("ltf_message").notNull(),
+  marketRegime: text("market_regime").notNull().default("UNKNOWN"),
+  confidenceScore: real("confidence_score").notNull().default(0),
+  atrPct: real("atr_pct").notNull().default(0),
+  liquidityScore: real("liquidity_score").notNull().default(0),
+  adaptiveRiskPct: real("adaptive_risk_pct").notNull().default(0),
+  executionGuard: text("execution_guard").notNull().default("NOT_EVALUATED"),
   triggeredAt: timestamp("triggered_at").notNull().defaultNow(),
 });
 

@@ -310,13 +310,15 @@ components:
 
     WatchedPair:
       type: object
-      required: [id, symbol, baseToken, quoteToken, chain, dex, pairAddress, state, htfMessage, ltfMessage, signalAction, currentPrice, priceChange24h, volume24h, addedAt]
+      required: [id, symbol, baseToken, baseTokenAddress, quoteToken, chain, dex, pairAddress, state, htfMessage, ltfMessage, signalAction, currentPrice, priceChange24h, volume24h, marketRegime, confidenceScore, atrPct, volatilityRatio, liquidityScore, adaptiveRiskPct, adaptiveStopLossPct, executionGuard, addedAt]
       properties:
         id:
           type: number
         symbol:
           type: string
         baseToken:
+          type: string
+        baseTokenAddress:
           type: string
         quoteToken:
           type: string
@@ -341,6 +343,23 @@ components:
           type: number
         volume24h:
           type: number
+        marketRegime:
+          type: string
+          description: "CALM | NORMAL | VOLATILE | EXTREME | UNKNOWN"
+        confidenceScore:
+          type: number
+        atrPct:
+          type: number
+        volatilityRatio:
+          type: number
+        liquidityScore:
+          type: number
+        adaptiveRiskPct:
+          type: number
+        adaptiveStopLossPct:
+          type: number
+        executionGuard:
+          type: string
         obType:
           type: ["string", "null"]
         obHigh:
@@ -365,7 +384,7 @@ components:
 
     Signal:
       type: object
-      required: [id, pairId, symbol, chain, dex, direction, price, obHigh, obLow, ltfMessage, triggeredAt]
+      required: [id, pairId, symbol, chain, dex, direction, price, obHigh, obLow, ltfMessage, marketRegime, confidenceScore, atrPct, liquidityScore, adaptiveRiskPct, executionGuard, triggeredAt]
       properties:
         id:
           type: number
@@ -388,12 +407,24 @@ components:
           type: number
         ltfMessage:
           type: string
+        marketRegime:
+          type: string
+        confidenceScore:
+          type: number
+        atrPct:
+          type: number
+        liquidityScore:
+          type: number
+        adaptiveRiskPct:
+          type: number
+        executionGuard:
+          type: string
         triggeredAt:
           type: string
 
     ScannerStats:
       type: object
-      required: [totalPairs, activeBull, activeBear, inPoi, waiting, filteredBias, outOfSession, signalsToday, signalsTotal, chainBreakdown]
+      required: [totalPairs, activeBull, activeBear, inPoi, waiting, filteredBias, outOfSession, adaptiveBlocked, volatileMarkets, averageConfidence, signalsToday, signalsTotal, chainBreakdown]
       properties:
         totalPairs:
           type: number
@@ -409,6 +440,12 @@ components:
           type: number
         outOfSession:
           type: number
+        adaptiveBlocked:
+          type: number
+        volatileMarkets:
+          type: number
+        averageConfidence:
+          type: number
         signalsToday:
           type: number
         signalsTotal:
@@ -420,13 +457,15 @@ components:
 
     MarketPair:
       type: object
-      required: [pairAddress, symbol, baseToken, quoteToken, chain, dex, price, priceChange24h, volume24h, liquidity, txns24h]
+      required: [pairAddress, symbol, baseToken, baseTokenAddress, quoteToken, chain, dex, price, priceChange24h, volume24h, liquidity, txns24h]
       properties:
         pairAddress:
           type: string
         symbol:
           type: string
         baseToken:
+          type: string
+        baseTokenAddress:
           type: string
         quoteToken:
           type: string

@@ -4,7 +4,7 @@
  */
 
 import { db, positionsTable, watchedPairsTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { eq, and, inArray } from "drizzle-orm";
 import { logger } from "./logger";
 import { calculatePositionSize, recordTradeResult, canOpenPosition } from "./capitalScaling";
 import { executeBuyEVM, executeSellEVM, getWalletAddress } from "./evmExecutor";
@@ -20,6 +20,11 @@ export interface ExecuteSignalOptions {
   obLow: number;
   ltfMessage: string;
   signalId?: number;
+  marketRegime?: string;
+  confidenceScore?: number;
+  liquidityScore?: number;
+  suggestedStopLossPct?: number;
+  executionGuard?: string;
 }
 
 export async function executeSignal(opts: ExecuteSignalOptions): Promise<{
@@ -38,10 +43,43 @@ export async function executeSignal(opts: ExecuteSignalOptions): Promise<{
   if (!pair) return { success: false, error: "Pair not found" };
 
   const chain = pair.chain;
+
+  // This is a spot DEX terminal. A BEAR signal closes an existing long; it
+  // must never submit a zero-amount sell or pretend to open a short.
+  if (opts.direction === "SELL") {
+    const openPositions = await db
+      .select()
+      .from(positionsTable)
+      .where(and(
+        eq(positionsTable.pairId, opts.pairId),
+        inArray(positionsTable.status, ["OPEN", "PARTIAL"]),
+      ))
+      .limit(1);
+    if (openPositions.length === 0) {
+      return { success: false, error: "No open spot position to sell" };
+    }
+    const closed = await closePosition(openPositions[0].id, 100);
+    return {
+      success: closed.success,
+      txHash: closed.txHash,
+      error: closed.error,
+    };
+  }
+
   const { allowed, reason } = await canOpenPosition(chain);
   if (!allowed) return { success: false, error: reason };
 
-  const sizing = await calculatePositionSize(chain);
+  const sizing = await calculatePositionSize(chain, {
+    marketRegime: opts.marketRegime,
+    confidenceScore: opts.confidenceScore,
+    liquidityScore: opts.liquidityScore,
+    suggestedStopLossPct: opts.suggestedStopLossPct,
+    executionAllowed: opts.executionGuard === "ADAPTIVE_GUARDS_CLEAR",
+    executionGuard: opts.executionGuard,
+  });
+  if (sizing.riskPct <= 0) {
+    return { success: false, error: opts.executionGuard ?? "Adaptive risk is zero" };
+  }
   const walletAddress = chain === "solana"
     ? await getSolanaWalletAddress()
     : await getWalletAddress(chain);
@@ -52,17 +90,9 @@ export async function executeSignal(opts: ExecuteSignalOptions): Promise<{
 
   let txResult;
   if (chain === "solana") {
-    if (opts.direction === "BUY") {
-      txResult = await executeBuySolana(opts.tokenAddress, sizing.positionSizeUsd);
-    } else {
-      txResult = await executeSellSolana(opts.tokenAddress, opts.tokenDecimals ?? 6, 0);
-    }
+    txResult = await executeBuySolana(opts.tokenAddress, sizing.positionSizeUsd);
   } else {
-    if (opts.direction === "BUY") {
-      txResult = await executeBuyEVM(chain, opts.tokenAddress as Address, sizing.positionSizeUsd);
-    } else {
-      txResult = await executeSellEVM(chain, opts.tokenAddress as Address, 0, opts.tokenDecimals ?? 18);
-    }
+    txResult = await executeBuyEVM(chain, opts.tokenAddress as Address, sizing.positionSizeUsd);
   }
 
   const [position] = await db
@@ -84,13 +114,11 @@ export async function executeSignal(opts: ExecuteSignalOptions): Promise<{
       riskPct: sizing.riskPct,
       obHigh: opts.obHigh,
       obLow: opts.obLow,
-      stopLossPrice: opts.direction === "BUY"
-        ? pair.currentPrice * (1 - sizing.stopLossPct / 100)
-        : pair.currentPrice * (1 + sizing.stopLossPct / 100),
-      stopLossPct: sizing.stopLossPct,
+      stopLossPrice: pair.currentPrice * (1 - (opts.suggestedStopLossPct ?? sizing.stopLossPct) / 100),
+      stopLossPct: opts.suggestedStopLossPct ?? sizing.stopLossPct,
       tpLevels: JSON.stringify(sizing.tpLevels),
       walletAddress,
-      notes: `Auto-executed: ${opts.ltfMessage} | Tier: ${sizing.scalingTier}`,
+      notes: `Auto-executed: ${opts.ltfMessage} | Tier: ${sizing.scalingTier} | Regime: ${opts.marketRegime ?? "UNKNOWN"} | Confidence: ${opts.confidenceScore ?? 0}`,
     })
     .returning();
 
@@ -136,8 +164,8 @@ export async function closePosition(
   if (position.chain === "solana") {
     txResult = await executeSellSolana("", 6, amountToClose);
   } else {
-    const tokenAddress = pair?.pairAddress as Address ?? "0x";
-    txResult = await executeSellEVM(position.chain, tokenAddress, amountToClose);
+      const tokenAddress = pair?.baseTokenAddress as Address ?? "0x";
+      txResult = await executeSellEVM(position.chain, tokenAddress, amountToClose);
   }
 
   const exitAmountUsd = txResult.amountOut || currentPrice * amountToClose;

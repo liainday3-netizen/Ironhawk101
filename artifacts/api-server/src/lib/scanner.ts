@@ -6,6 +6,7 @@
 
 import { db, watchedPairsTable, signalsTable, capitalConfigTable } from "@workspace/db";
 import { monitorPositions, executeSignal } from "./tradeExecutor";
+import { calculatePositionSize } from "./capitalScaling";
 import { eq, desc, sql } from "drizzle-orm";
 import { logger } from "./logger";
 import { getOHLCV, getPairInfo } from "./marketData";
@@ -36,7 +37,18 @@ export async function runScanCycle(): Promise<void> {
 
         const currentPrice = info?.price ?? pair.currentPrice;
         const prevState = pair.state;
-        const result = analyzeAsset(htf4h, ltf15m, d1, currentPrice);
+        const result = analyzeAsset(htf4h, ltf15m, d1, currentPrice, {
+          liquidityUsd: info?.liquidity ?? 0,
+          volume24h: info?.volume24h ?? pair.volume24h,
+        });
+        const adaptiveSizing = await calculatePositionSize(pair.chain, {
+          marketRegime: result.marketRegime,
+          confidenceScore: result.confidenceScore,
+          liquidityScore: result.liquidityScore,
+          suggestedStopLossPct: result.suggestedStopLossPct,
+          executionAllowed: result.executionAllowed,
+          executionGuard: result.executionGuard,
+        });
 
         // Update pair state + market data; also persist baseTokenAddress if we got it
         await db
@@ -46,6 +58,14 @@ export async function runScanCycle(): Promise<void> {
             htfMessage: result.htfMessage,
             ltfMessage: result.ltfMessage,
             signalAction: result.signalAction,
+            marketRegime: result.marketRegime,
+            confidenceScore: result.confidenceScore,
+            atrPct: result.atrPct,
+            volatilityRatio: result.volatilityRatio,
+            liquidityScore: result.liquidityScore,
+            adaptiveRiskPct: adaptiveSizing.riskPct,
+            adaptiveStopLossPct: result.suggestedStopLossPct,
+            executionGuard: result.executionGuard,
             obType: result.obType,
             obHigh: result.obHigh,
             obLow: result.obLow,
@@ -81,6 +101,12 @@ export async function runScanCycle(): Promise<void> {
               obHigh: result.obHigh,
               obLow: result.obLow,
               ltfMessage: result.ltfMessage,
+              marketRegime: result.marketRegime,
+              confidenceScore: result.confidenceScore,
+              atrPct: result.atrPct,
+              liquidityScore: result.liquidityScore,
+              adaptiveRiskPct: adaptiveSizing.riskPct,
+              executionGuard: result.executionGuard,
             })
             .returning();
 
@@ -95,6 +121,12 @@ export async function runScanCycle(): Promise<void> {
             ltfMessage: result.ltfMessage,
             signalId: insertedSignal.id,
             isBull: result.state === "BULL_EXEC",
+            executionAllowed: result.executionAllowed,
+            executionGuard: result.executionGuard,
+            marketRegime: result.marketRegime,
+            confidenceScore: result.confidenceScore,
+            liquidityScore: result.liquidityScore,
+            suggestedStopLossPct: result.suggestedStopLossPct,
           });
         }
       } catch (err) {
@@ -126,6 +158,12 @@ interface AutoExecuteOpts {
   obLow: number;
   ltfMessage: string;
   signalId: number;
+  executionAllowed: boolean;
+  executionGuard: string;
+  marketRegime: string;
+  confidenceScore: number;
+  liquidityScore: number;
+  suggestedStopLossPct: number;
 }
 
 async function maybeAutoExecute(opts: AutoExecuteOpts): Promise<void> {
@@ -134,6 +172,14 @@ async function maybeAutoExecute(opts: AutoExecuteOpts): Promise<void> {
   // Need a token address to execute — can't swap without it
   if (!pair.baseTokenAddress) {
     logger.warn({ pairId: pair.id, chain: pair.chain }, "Auto-execute skipped: no baseTokenAddress stored for this pair");
+    return;
+  }
+
+  if (!opts.executionAllowed) {
+    logger.info(
+      { pairId: pair.id, chain: pair.chain, direction, guard: opts.executionGuard, regime: opts.marketRegime },
+      "Auto-execute blocked by adaptive guard",
+    );
     return;
   }
 
@@ -168,6 +214,11 @@ async function maybeAutoExecute(opts: AutoExecuteOpts): Promise<void> {
     obLow,
     ltfMessage,
     signalId,
+    marketRegime: opts.marketRegime,
+    confidenceScore: opts.confidenceScore,
+    liquidityScore: opts.liquidityScore,
+    suggestedStopLossPct: opts.suggestedStopLossPct,
+    executionGuard: opts.executionGuard,
   }).then((res) => {
     if (res.success) {
       logger.info({ positionId: res.positionId, txHash: res.txHash, sizeUsd: res.positionSizeUsd }, "Auto-execute: position opened");
@@ -203,6 +254,9 @@ export async function getScannerStats() {
   let waiting = 0;
   let filteredBias = 0;
   let outOfSession = 0;
+  let adaptiveBlocked = 0;
+  let volatileMarkets = 0;
+  let confidenceSum = 0;
 
   for (const p of pairs) {
     chainBreakdown[p.chain] = (chainBreakdown[p.chain] ?? 0) + 1;
@@ -212,6 +266,9 @@ export async function getScannerStats() {
     else if (p.state === "WAITING") waiting++;
     else if (p.state === "FILTERED_BIAS") filteredBias++;
     else if (p.state === "OUT_OF_SESSION") outOfSession++;
+    if (p.executionGuard !== "ADAPTIVE_GUARDS_CLEAR" && p.executionGuard !== "INITIALIZING") adaptiveBlocked++;
+    if (p.marketRegime === "VOLATILE" || p.marketRegime === "EXTREME") volatileMarkets++;
+    confidenceSum += p.confidenceScore;
   }
 
   const today = new Date();
@@ -234,6 +291,9 @@ export async function getScannerStats() {
     waiting,
     filteredBias,
     outOfSession,
+    adaptiveBlocked,
+    volatileMarkets,
+    averageConfidence: pairs.length ? confidenceSum / pairs.length : 0,
     signalsToday: signalsTodayRow?.count ?? 0,
     signalsTotal: signalsTotalRow?.count ?? 0,
     chainBreakdown,

@@ -34,9 +34,18 @@ export interface MicrostructureResult {
   obType: "BULL" | "BEAR" | null;
   obHigh: number | null;
   obLow: number | null;
+  marketRegime: "CALM" | "NORMAL" | "VOLATILE" | "EXTREME" | "UNKNOWN";
+  confidenceScore: number;
+  atrPct: number;
+  volatilityRatio: number;
+  liquidityScore: number;
+  executionAllowed: boolean;
+  executionGuard: string;
+  suggestedStopLossPct: number;
 }
 
-const VOLUME_ZSCORE_THRESHOLD = 1.5;
+const MIN_CONFIDENCE_TO_EXECUTE = 65;
+const MIN_LIQUIDITY_SCORE_TO_EXECUTE = 35;
 const USE_DAILY_BIAS = true;
 const USE_KILLZONES = true;
 const LONDON_START = 8;
@@ -47,7 +56,9 @@ const NY_END = 17;
 export function detectOrderBlock(htfCandles: OHLCVCandle[]): OrderBlock | null {
   if (htfCandles.length < 5) return null;
 
-  for (let i = 2; i < htfCandles.length - 2; i++) {
+  // Prefer the most recent valid block; old blocks should not keep a market
+  // pinned to stale structure after the asset has moved on.
+  for (let i = htfCandles.length - 3; i >= 2; i--) {
     const prev = htfCandles[i + 1];
     const curr = htfCandles[i];
     const confirm = htfCandles[i - 1];
@@ -85,10 +96,115 @@ export function isInKillzone(): boolean {
   return (hour >= LONDON_START && hour <= LONDON_END) || (hour >= NY_START && hour <= NY_END);
 }
 
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+export interface MarketContext {
+  liquidityUsd?: number;
+  volume24h?: number;
+}
+
+export interface AdaptiveMetrics {
+  marketRegime: "CALM" | "NORMAL" | "VOLATILE" | "EXTREME" | "UNKNOWN";
+  confidenceScore: number;
+  atrPct: number;
+  volatilityRatio: number;
+  liquidityScore: number;
+  executionAllowed: boolean;
+  executionGuard: string;
+  suggestedStopLossPct: number;
+}
+
+/**
+ * Calculates conditions from each asset's own recent candles. The engine
+ * adapts thresholds per asset rather than applying one fixed setting to
+ * illiquid microcaps and deep majors alike.
+ */
+export function getAdaptiveMetrics(
+  htfCandles: OHLCVCandle[],
+  ltfCandles: OHLCVCandle[],
+  context: MarketContext = {},
+): AdaptiveMetrics {
+  const candles = ltfCandles.length >= 20 ? ltfCandles : htfCandles;
+  if (candles.length < 20) {
+    return {
+      marketRegime: "UNKNOWN",
+      confidenceScore: 0,
+      atrPct: 0,
+      volatilityRatio: 0,
+      liquidityScore: 0,
+      executionAllowed: false,
+      executionGuard: "INSUFFICIENT_CANDLE_HISTORY",
+      suggestedStopLossPct: 5,
+    };
+  }
+
+  const recent = candles.slice(-50);
+  const rangePct = recent.map((c, index) => {
+    const previousClose = recent[index - 1]?.close ?? c.open;
+    const trueRange = Math.max(
+      c.high - c.low,
+      Math.abs(c.high - previousClose),
+      Math.abs(c.low - previousClose),
+    );
+    return c.close > 0 ? (trueRange / c.close) * 100 : 0;
+  }).filter(Number.isFinite);
+
+  const atrWindow = rangePct.slice(-14);
+  const baselineWindow = rangePct.slice(0, -14);
+  const atrPct = atrWindow.reduce((sum, value) => sum + value, 0) / Math.max(atrWindow.length, 1);
+  const baselineAtrPct = baselineWindow.reduce((sum, value) => sum + value, 0) / Math.max(baselineWindow.length, 1);
+  const volatilityRatio = baselineAtrPct > 0 ? atrPct / baselineAtrPct : 1;
+
+  const marketRegime =
+    volatilityRatio >= 2.25 || atrPct >= 8 ? "EXTREME" :
+    volatilityRatio >= 1.45 || atrPct >= 4 ? "VOLATILE" :
+    volatilityRatio <= 0.7 ? "CALM" : "NORMAL";
+
+  // Unknown liquidity never receives an execution pass. It can still be
+  // displayed for research, but cannot trigger a live trade.
+  const liquidityUsd = context.liquidityUsd ?? 0;
+  const liquidityScore = liquidityUsd > 0
+    ? clamp((Math.log10(liquidityUsd + 1) / 6) * 100, 0, 100)
+    : 0;
+
+  // Wider volatility-aware stops prevent normal noise from stopping a trade.
+  // Position notional is reduced separately so the configured risk ceiling
+  // remains bounded.
+  const suggestedStopLossPct = clamp(atrPct * 2.2, 1.5, 12);
+  const volatilityPenalty =
+    marketRegime === "EXTREME" ? 0 :
+    marketRegime === "VOLATILE" ? 10 :
+    marketRegime === "CALM" ? 4 : 0;
+  const confidenceScore = clamp(
+    100 - volatilityPenalty - (liquidityScore < MIN_LIQUIDITY_SCORE_TO_EXECUTE ? 20 : 0),
+    0,
+    100,
+  );
+
+  let executionGuard = "ADAPTIVE_GUARDS_CLEAR";
+  if (marketRegime === "EXTREME") executionGuard = "EXTREME_VOLATILITY";
+  else if (liquidityScore < MIN_LIQUIDITY_SCORE_TO_EXECUTE) executionGuard = "THIN_LIQUIDITY";
+  else if (confidenceScore < MIN_CONFIDENCE_TO_EXECUTE) executionGuard = "LOW_CONFIDENCE";
+
+  return {
+    marketRegime,
+    confidenceScore,
+    atrPct,
+    volatilityRatio,
+    liquidityScore,
+    executionAllowed: executionGuard === "ADAPTIVE_GUARDS_CLEAR",
+    executionGuard,
+    suggestedStopLossPct,
+  };
+}
+
 function analyzeLTF(
   ltfCandles: OHLCVCandle[],
   inBullOB: boolean,
-  inBearOB: boolean
+  inBearOB: boolean,
+  volumeZThreshold: number,
 ): { state: MarketState; ltfMessage: string } {
   if (ltfCandles.length < 10) {
     return { state: "WAITING", ltfMessage: "INSUFFICIENT LTF DATA" };
@@ -98,8 +214,8 @@ function analyzeLTF(
   const volMean = vols.reduce((a, b) => a + b, 0) / vols.length;
   const variance = vols.reduce((sum, v) => sum + Math.pow(v - volMean, 2), 0) / vols.length;
   const stdDev = Math.sqrt(variance);
-  const volThreshold = volMean + VOLUME_ZSCORE_THRESHOLD * stdDev;
-  const latestVol = ltfCandles[1]?.volume ?? 0;
+  const volThreshold = volMean + volumeZThreshold * stdDev;
+  const latestVol = ltfCandles[ltfCandles.length - 1]?.volume ?? 0;
 
   let recentSwingHigh = -Infinity;
   let recentSwingLow = Infinity;
@@ -126,7 +242,7 @@ function analyzeLTF(
     recentSwingLow = Math.min(...lows);
   }
 
-  const latestClose = ltfCandles[1]?.close ?? ltfCandles[0]?.close ?? 0;
+  const latestClose = ltfCandles[ltfCandles.length - 1]?.close ?? ltfCandles[0]?.close ?? 0;
 
   if (inBullOB) {
     if (latestClose > recentSwingHigh && latestVol > volThreshold) {
@@ -155,8 +271,14 @@ export function analyzeAsset(
   htfCandles: OHLCVCandle[],
   ltfCandles: OHLCVCandle[],
   d1Candles: OHLCVCandle[],
-  currentPrice: number
+  currentPrice: number,
+  context: MarketContext = {},
 ): MicrostructureResult {
+  const adaptive = getAdaptiveMetrics(htfCandles, ltfCandles, context);
+  const volumeZThreshold =
+    adaptive.marketRegime === "CALM" ? 1.2 :
+    adaptive.marketRegime === "VOLATILE" ? 1.8 :
+    adaptive.marketRegime === "EXTREME" ? 2.2 : 1.5;
   const ob = detectOrderBlock(htfCandles);
 
   if (!ob) {
@@ -168,6 +290,7 @@ export function analyzeAsset(
       obType: null,
       obHigh: null,
       obLow: null,
+      ...adaptive,
     };
   }
 
@@ -183,6 +306,7 @@ export function analyzeAsset(
       obType: ob.type,
       obHigh: ob.high,
       obLow: ob.low,
+      ...adaptive,
     };
   }
 
@@ -197,6 +321,7 @@ export function analyzeAsset(
         obType: ob.type,
         obHigh: ob.high,
         obLow: ob.low,
+        ...adaptive,
       };
     }
   }
@@ -210,10 +335,11 @@ export function analyzeAsset(
       obType: ob.type,
       obHigh: ob.high,
       obLow: ob.low,
+        ...adaptive,
     };
   }
 
-  const { state, ltfMessage } = analyzeLTF(ltfCandles, inBullOB, inBearOB);
+  const { state, ltfMessage } = analyzeLTF(ltfCandles, inBullOB, inBearOB, volumeZThreshold);
 
   const htfMessage = state === "BULL_EXEC"
     ? "HTF BULLISH"
@@ -235,5 +361,6 @@ export function analyzeAsset(
     obType: ob.type,
     obHigh: ob.high,
     obLow: ob.low,
+    ...adaptive,
   };
 }

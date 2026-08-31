@@ -1,6 +1,6 @@
 import { useListSignals, getListSignalsQueryKey } from "@workspace/api-client-react";
 import type { Signal } from "@workspace/api-client-react";
-import { ArrowUpRight, ArrowDownRight, Clock, Target } from "lucide-react";
+import { ArrowUpRight, ArrowDownRight, Clock, Target, ShieldCheck, ShieldAlert } from "lucide-react";
 import { format } from "date-fns";
 
 export default function Signals() {
@@ -26,17 +26,18 @@ export default function Signals() {
       </div>
 
       <div className="border border-border bg-card flex flex-col">
-        <div className="grid grid-cols-[1fr_1.2fr_1fr_2fr_1fr] gap-4 p-4 border-b border-border bg-secondary text-xs font-mono text-muted-foreground font-semibold">
+        <div className="grid grid-cols-[1fr_1.2fr_1fr_1.5fr_1.2fr_1fr] gap-4 p-4 border-b border-border bg-secondary text-xs font-mono text-muted-foreground font-semibold">
           <div>TIMESTAMP</div>
           <div>ASSET / CHAIN</div>
           <div className="text-right">PRICE</div>
-          <div>LTF_TRIGGER</div>
+          <div>TRIGGER / REGIME</div>
+          <div>ADAPTIVE_RISK</div>
           <div className="text-right">DIRECTION</div>
         </div>
 
         <div className="flex flex-col divide-y divide-border">
           {signals.map((sig: Signal) => (
-            <div key={sig.id} className="grid grid-cols-[1fr_1.2fr_1fr_2fr_1fr] gap-4 p-4 items-center hover:bg-secondary/50 transition-colors">
+            <div key={sig.id} className="grid grid-cols-[1fr_1.2fr_1fr_1.5fr_1.2fr_1fr] gap-4 p-4 items-center hover:bg-secondary/50 transition-colors">
               <div className="font-mono text-xs text-muted-foreground flex flex-col gap-0.5">
                 <div className="flex items-center gap-1">
                   <Clock size={10} />
@@ -54,8 +55,19 @@ export default function Signals() {
                 ${sig.price < 0.001 ? sig.price.toFixed(8) : sig.price.toFixed(4)}
               </div>
 
-              <div className="font-mono text-xs text-muted-foreground truncate" title={sig.ltfMessage}>
-                {sig.ltfMessage}
+              <div className="flex flex-col gap-1 font-mono text-xs truncate" title={sig.ltfMessage}>
+                <span className="text-foreground truncate">{sig.ltfMessage}</span>
+                <span className="text-[10px] text-muted-foreground">{sig.marketRegime} / ATR {sig.atrPct.toFixed(2)}%</span>
+              </div>
+
+              <div className="flex flex-col gap-1 font-mono text-xs">
+                <span className={sig.executionGuard === "ADAPTIVE_GUARDS_CLEAR" ? "text-green-500" : "text-yellow-400"}>
+                  {sig.adaptiveRiskPct.toFixed(2)}%
+                </span>
+                <span className="flex items-center gap-1 text-[10px] text-muted-foreground truncate">
+                  {sig.executionGuard === "ADAPTIVE_GUARDS_CLEAR" ? <ShieldCheck size={10} /> : <ShieldAlert size={10} />}
+                  {sig.executionGuard}
+                </span>
               </div>
 
               <div className="flex justify-end">

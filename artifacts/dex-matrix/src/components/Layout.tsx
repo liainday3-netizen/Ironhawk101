@@ -52,6 +52,16 @@ export function Layout({ children }: { children: ReactNode }) {
             <span className="text-muted-foreground text-xs">SIG/TOTAL:</span>
             <span className="font-bold text-foreground">{stats?.signalsTotal ?? 0}</span>
           </div>
+          <div className="flex items-center gap-2">
+            <span className="text-muted-foreground text-xs">ADAPTIVE_BLOCK:</span>
+            <span className={`font-bold ${(stats?.adaptiveBlocked ?? 0) > 0 ? "text-yellow-400" : "text-green-500"}`}>
+              {stats?.adaptiveBlocked ?? 0}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-muted-foreground text-xs">AVG_CONF:</span>
+            <span className="font-bold text-primary">{(stats?.averageConfidence ?? 0).toFixed(0)}%</span>
+          </div>
         </div>
       </header>
 

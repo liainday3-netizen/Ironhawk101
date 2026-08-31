@@ -10,6 +10,7 @@ export interface MarketPair {
   pairAddress: string;
   symbol: string;
   baseToken: string;
+  baseTokenAddress: string;
   quoteToken: string;
   chain: string;
   dex: string;
