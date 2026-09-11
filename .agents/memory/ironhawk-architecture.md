@@ -31,7 +31,15 @@ Old tables (`trades`, `signals`, `capital_snapshots`, `watchlist`) were dropped 
 ## Packages added to api-server
 `viem`, `@solana/web3.js`, `bs58`
 
-## On-chain execution requires wallet secrets (NOT set yet)
+## On-chain execution requires wallet secrets and explicit server gates
 - EVM: `EVM_WALLET_PRIVATE_KEY` or `BASE_WALLET_PRIVATE_KEY`
 - Solana: `SOLANA_WALLET_PRIVATE_KEY` (base58 or JSON array)
-Without these, auto-execute stays off — manual mode works.
+Without these, execution fails safely. Live execution also requires `TRADING_ENABLED=true`
+and a non-empty `TRADING_ALLOWED_USER_IDS` allowlist; Clerk authentication protects all
+non-health API routes, and owner authorization protects mutations.
+
+**Why:** The API owns funded-wallet execution and persists global trading state, so an
+authenticated-but-unapproved user must not be able to trade or change capital/watchlists.
+
+**How to apply:** Keep the kill switch and owner allowlist unset during development and
+until wallet, market-data, and emergency-close behavior have been verified.

@@ -8,6 +8,8 @@ import {
   MIN_CAPITAL_USD,
 } from "../lib/capitalScaling";
 import { executeSignal, closePosition } from "../lib/tradeExecutor";
+import { requireTradingAccess } from "../middlewares/auth";
+import { getTradingConfigurationError } from "../lib/tradingGuard";
 
 const router = Router();
 
@@ -63,14 +65,14 @@ router.get("/trader/positions", async (req, res) => {
 });
 
 // POST /trader/positions/:id/close
-router.post("/trader/positions/:id/close", async (req, res) => {
+router.post("/trader/positions/:id/close", requireTradingAccess, async (req, res) => {
   const id = Number(req.params.id);
-  if (!id || isNaN(id)) {
+  if (!Number.isInteger(id) || id <= 0) {
     res.status(400).json({ error: "Invalid position id" });
     return;
   }
   const pctToClose = Number(req.body?.pctToClose ?? 100);
-  if (isNaN(pctToClose) || pctToClose < 1 || pctToClose > 100) {
+  if (!Number.isFinite(pctToClose) || pctToClose < 1 || pctToClose > 100) {
     res.status(400).json({ error: "pctToClose must be 1–100" });
     return;
   }
@@ -91,18 +93,31 @@ router.post("/trader/positions/:id/close", async (req, res) => {
 });
 
 // POST /trader/execute
-router.post("/trader/execute", async (req, res) => {
+router.post("/trader/execute", requireTradingAccess, async (req, res) => {
   const { pairId, direction, tokenAddress, tokenDecimals } = req.body ?? {};
-  if (!pairId || !direction || !tokenAddress) {
+  const parsedPairId = Number(pairId);
+  const normalizedDirection = String(direction ?? "").toUpperCase();
+  const normalizedTokenAddress = typeof tokenAddress === "string" ? tokenAddress.trim() : "";
+  const parsedDecimals = tokenDecimals === undefined ? 18 : Number(tokenDecimals);
+
+  if (
+    !Number.isInteger(parsedPairId) ||
+    parsedPairId <= 0 ||
+    !["BUY", "SELL"].includes(normalizedDirection) ||
+    !normalizedTokenAddress ||
+    !Number.isInteger(parsedDecimals) ||
+    parsedDecimals < 0 ||
+    parsedDecimals > 18
+  ) {
     res.status(400).json({ error: "pairId, direction, tokenAddress are required" });
     return;
   }
 
   const result = await executeSignal({
-    pairId: Number(pairId),
-    direction,
-    tokenAddress,
-    tokenDecimals: tokenDecimals ?? 18,
+    pairId: parsedPairId,
+    direction: normalizedDirection as "BUY" | "SELL",
+    tokenAddress: normalizedTokenAddress,
+    tokenDecimals: parsedDecimals,
     obHigh: 0,
     obLow: 0,
     ltfMessage: "Manual execution",
@@ -134,41 +149,111 @@ router.get("/trader/capital", async (_req, res) => {
 });
 
 // PATCH /trader/capital
-router.patch("/trader/capital", async (req, res) => {
+router.patch("/trader/capital", requireTradingAccess, async (req, res) => {
   const { chain, ...updates } = req.body ?? {};
-  if (!chain) {
+  const normalizedChain = typeof chain === "string" ? chain.toLowerCase() : "";
+  if (!["ethereum", "base", "solana"].includes(normalizedChain)) {
     res.status(400).json({ error: "chain is required" });
     return;
   }
 
-  if (updates.initialCapitalUsd !== undefined && updates.initialCapitalUsd < MIN_CAPITAL_USD) {
-    res.status(400).json({ error: `Minimum start capital is $${MIN_CAPITAL_USD}` });
+  const numericFields = [
+    "initialCapitalUsd",
+    "riskPct",
+    "maxRiskPct",
+    "stopLossPct",
+    "maxPositionUsd",
+    "maxConcurrentPositions",
+  ] as const;
+  for (const field of numericFields) {
+    if (
+      updates[field] !== undefined &&
+      (!Number.isFinite(Number(updates[field])) || Number(updates[field]) < 0)
+    ) {
+      res.status(400).json({ error: `${field} must be a non-negative number` });
+      return;
+    }
+  }
+
+  if (
+    updates.initialCapitalUsd !== undefined &&
+    (Number(updates.initialCapitalUsd) < MIN_CAPITAL_USD ||
+      Number(updates.initialCapitalUsd) > 1_000_000)
+  ) {
+    res.status(400).json({
+      error: `initialCapitalUsd must be between $${MIN_CAPITAL_USD} and $1,000,000`,
+    });
     return;
   }
 
-  const config = await getOrCreateCapitalConfig(chain);
+  if (updates.riskPct !== undefined && Number(updates.riskPct) > 10) {
+    res.status(400).json({ error: "riskPct cannot exceed 10" });
+    return;
+  }
+  if (updates.maxRiskPct !== undefined && Number(updates.maxRiskPct) > 10) {
+    res.status(400).json({ error: "maxRiskPct cannot exceed 10" });
+    return;
+  }
+  if (updates.stopLossPct !== undefined && Number(updates.stopLossPct) > 100) {
+    res.status(400).json({ error: "stopLossPct cannot exceed 100" });
+    return;
+  }
+  if (updates.maxPositionUsd !== undefined && Number(updates.maxPositionUsd) > 1_000_000) {
+    res.status(400).json({ error: "maxPositionUsd cannot exceed $1,000,000" });
+    return;
+  }
+  if (
+    updates.maxConcurrentPositions !== undefined &&
+    (!Number.isInteger(Number(updates.maxConcurrentPositions)) ||
+      Number(updates.maxConcurrentPositions) < 1 ||
+      Number(updates.maxConcurrentPositions) > 8)
+  ) {
+    res.status(400).json({ error: "maxConcurrentPositions must be an integer from 1 to 8" });
+    return;
+  }
+
+  if (updates.autoExecute !== undefined && typeof updates.autoExecute !== "boolean") {
+    res.status(400).json({ error: "autoExecute must be a boolean" });
+    return;
+  }
+  if (
+    updates.walletAddress !== undefined &&
+    (typeof updates.walletAddress !== "string" || updates.walletAddress.length > 128)
+  ) {
+    res.status(400).json({ error: "walletAddress must be a string no longer than 128 characters" });
+    return;
+  }
+
+  if (updates.autoExecute === true && getTradingConfigurationError()) {
+    res.status(503).json({
+      error: getTradingConfigurationError(),
+    });
+    return;
+  }
+
+  const config = await getOrCreateCapitalConfig(normalizedChain);
   const setValues: Partial<typeof capitalConfigTable.$inferInsert> = { updatedAt: new Date() };
 
   if (updates.initialCapitalUsd !== undefined) {
-    setValues.initialCapitalUsd = updates.initialCapitalUsd;
+    setValues.initialCapitalUsd = Number(updates.initialCapitalUsd);
     if (config.totalTradeCount === 0) {
-      setValues.currentCapitalUsd = updates.initialCapitalUsd;
+      setValues.currentCapitalUsd = Number(updates.initialCapitalUsd);
     }
   }
-  if (updates.riskPct !== undefined) setValues.riskPct = updates.riskPct;
-  if (updates.maxRiskPct !== undefined) setValues.maxRiskPct = updates.maxRiskPct;
-  if (updates.stopLossPct !== undefined) setValues.stopLossPct = updates.stopLossPct;
-  if (updates.maxPositionUsd !== undefined) setValues.maxPositionUsd = updates.maxPositionUsd;
-  if (updates.maxConcurrentPositions !== undefined) setValues.maxConcurrentPositions = updates.maxConcurrentPositions;
+  if (updates.riskPct !== undefined) setValues.riskPct = Number(updates.riskPct);
+  if (updates.maxRiskPct !== undefined) setValues.maxRiskPct = Number(updates.maxRiskPct);
+  if (updates.stopLossPct !== undefined) setValues.stopLossPct = Number(updates.stopLossPct);
+  if (updates.maxPositionUsd !== undefined) setValues.maxPositionUsd = Number(updates.maxPositionUsd);
+  if (updates.maxConcurrentPositions !== undefined) setValues.maxConcurrentPositions = Number(updates.maxConcurrentPositions);
   if (updates.autoExecute !== undefined) setValues.autoExecute = updates.autoExecute;
   if (updates.walletAddress !== undefined) setValues.walletAddress = updates.walletAddress;
 
   await db
     .update(capitalConfigTable)
     .set(setValues)
-    .where(eq(capitalConfigTable.chain, chain));
+    .where(eq(capitalConfigTable.chain, normalizedChain));
 
-  const summary = await getPerformanceSummary(chain);
+  const summary = await getPerformanceSummary(normalizedChain);
   res.json(summary[0]);
 });
 

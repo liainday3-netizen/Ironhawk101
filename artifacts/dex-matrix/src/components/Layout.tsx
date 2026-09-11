@@ -1,10 +1,13 @@
 import { ReactNode } from "react";
 import { Link, useLocation } from "wouter";
+import { useClerk, useUser } from "@clerk/react";
 import { useGetScannerStats, getGetScannerStatsQueryKey } from "@workspace/api-client-react";
 import { Activity, LayoutDashboard, History, Telescope, TerminalSquare, TrendingUp } from "lucide-react";
 
 export function Layout({ children }: { children: ReactNode }) {
   const [location] = useLocation();
+  const { user } = useUser();
+  const { signOut } = useClerk();
   const { data: stats } = useGetScannerStats({
     query: { refetchInterval: 10000, queryKey: getGetScannerStatsQueryKey() }
   });
@@ -24,6 +27,14 @@ export function Layout({ children }: { children: ReactNode }) {
               <span>SYS_ONLINE</span>
             </div>
             <span className="hidden sm:block">{new Date().toISOString().split('T')[1].slice(0, -1)}Z</span>
+            <button
+              type="button"
+              onClick={() => signOut()}
+              className="border border-border px-2 py-1 text-[10px] font-bold hover:border-primary hover:text-primary"
+              title={user?.primaryEmailAddress?.emailAddress ?? "Account"}
+            >
+              SIGN_OUT
+            </button>
           </div>
         </div>
 
@@ -70,7 +81,7 @@ export function Layout({ children }: { children: ReactNode }) {
         {/* Sidebar */}
         <aside className="w-16 lg:w-52 border-r border-border bg-card flex flex-col py-4 flex-none">
           <nav className="flex flex-col gap-1 px-2">
-            <NavItem href="/" icon={<LayoutDashboard size={18} />} label="MATRIX" active={location === "/"} />
+            <NavItem href="/terminal" icon={<LayoutDashboard size={18} />} label="MATRIX" active={location === "/terminal"} />
             <NavItem href="/signals" icon={<History size={18} />} label="SIGNALS" active={location === "/signals"} />
             <NavItem href="/market" icon={<Telescope size={18} />} label="MARKET" active={location === "/market"} />
             <NavItem href="/capital" icon={<TrendingUp size={18} />} label="CAPITAL" active={location === "/capital"} />

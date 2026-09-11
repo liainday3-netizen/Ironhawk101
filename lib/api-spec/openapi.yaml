@@ -15,12 +15,15 @@ tags:
     description: DEX market discovery and OHLCV data
   - name: trader
     description: Positions, capital scaling, and execution
+security:
+  - clerkSession: []
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
+      security: []
       responses:
         "200":
           description: Healthy
@@ -300,6 +303,12 @@ paths:
                 $ref: "#/components/schemas/PerformanceSummary"
 
 components:
+  securitySchemes:
+    clerkSession:
+      type: apiKey
+      in: cookie
+      name: __session
+      description: Clerk browser session cookie
   schemas:
     HealthStatus:
       type: object

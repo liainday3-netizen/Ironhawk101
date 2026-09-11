@@ -3,8 +3,17 @@ import { db, watchedPairsTable, signalsTable } from "@workspace/db";
 import { eq, desc } from "drizzle-orm";
 import { getPairInfo } from "../lib/marketData";
 import { getScannerStats, runScanCycle } from "../lib/scanner";
+import { requireTradingAccess } from "../middlewares/auth";
+import { logger } from "../lib/logger";
 
 const router = Router();
+const VALID_CHAINS = new Set(["ethereum", "base", "solana"]);
+
+function isValidPairAddress(chain: string, address: unknown): address is string {
+  if (typeof address !== "string") return false;
+  if (chain === "solana") return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address);
+  return /^0x[a-fA-F0-9]{40}$/.test(address);
+}
 
 // GET /scanner/pairs
 router.get("/scanner/pairs", async (_req, res) => {
@@ -41,10 +50,14 @@ router.get("/scanner/pairs", async (_req, res) => {
 });
 
 // POST /scanner/pairs
-router.post("/scanner/pairs", async (req, res) => {
+router.post("/scanner/pairs", requireTradingAccess, async (req, res) => {
   const { pairAddress, chain, customLabel } = req.body ?? {};
-  if (!pairAddress || !chain) {
-    res.status(400).json({ error: "pairAddress and chain are required" });
+  const normalizedChain = typeof chain === "string" ? chain.toLowerCase() : "";
+  if (!VALID_CHAINS.has(normalizedChain) || !isValidPairAddress(normalizedChain, pairAddress)) {
+    res.status(400).json({
+      error:
+        "A valid pairAddress and one of ethereum, base, or solana are required",
+    });
     return;
   }
 
@@ -60,16 +73,23 @@ router.post("/scanner/pairs", async (req, res) => {
 
   let pairInfo;
   try {
-    pairInfo = await getPairInfo(pairAddress, chain);
+    pairInfo = await getPairInfo(pairAddress, normalizedChain);
   } catch {
     pairInfo = null;
+  }
+
+  if (!pairInfo?.baseTokenAddress) {
+    res.status(422).json({
+      error: "Pair metadata could not be verified. The pair was not added.",
+    });
+    return;
   }
 
   const [inserted] = await db
     .insert(watchedPairsTable)
     .values({
       pairAddress,
-      chain,
+      chain: normalizedChain,
       dex: pairInfo?.dex ?? "",
       symbol: pairInfo?.symbol ?? customLabel ?? pairAddress.slice(0, 10),
       baseToken: pairInfo?.baseToken ?? "",
@@ -87,7 +107,9 @@ router.post("/scanner/pairs", async (req, res) => {
     })
     .returning();
 
-  runScanCycle().catch(() => {});
+  runScanCycle().catch((err) => {
+    logger.error({ err }, "Initial scan failed after pair was added");
+  });
 
   res.status(201).json({
     id: inserted.id,
@@ -114,7 +136,7 @@ router.post("/scanner/pairs", async (req, res) => {
 });
 
 // DELETE /scanner/pairs/:id
-router.delete("/scanner/pairs/:id", async (req, res) => {
+router.delete("/scanner/pairs/:id", requireTradingAccess, async (req, res) => {
   const id = Number(req.params.id);
   if (!id || isNaN(id)) {
     res.status(400).json({ error: "Invalid id" });

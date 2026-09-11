@@ -10,7 +10,8 @@ A multi-chain DEX trading terminal with the IronHawk Microstructure Matrix signa
 - `pnpm run build` — typecheck + build all packages
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas
 - `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string, `SESSION_SECRET`
+- Required env: `DATABASE_URL` — Postgres connection string, `SESSION_SECRET`, and the provisioned Clerk keys
+- Live trading is fail-closed: set `TRADING_ENABLED=true` and configure `TRADING_ALLOWED_USER_IDS` with the Clerk user ID(s) allowed to mutate capital, watchlists, and trades. Keep these unset until wallet configuration, market-data safeguards, and owner access are verified.
 
 ## Stack
 
@@ -32,15 +33,15 @@ A multi-chain DEX trading terminal with the IronHawk Microstructure Matrix signa
 
 ## Architecture decisions
 
-- Frontend-first DEX integration: wallet connection and price feeds are purely client-side via public RPCs and DeFiLlama's free coins API — no API keys required
-- Backend is thin persistence only: stores trade history, capital snapshots, signal history, and watchlist; all trading logic runs in the browser
+- Clerk sessions protect the browser terminal and every non-health API route; mutation routes additionally require the configured trading owner allowlist
+- Backend owns the trade lifecycle and on-chain execution; the browser never receives wallet private keys
 - Starting capital hardcoded at $10 in the portfolio summary route — update `artifacts/api-server/src/routes/portfolio.ts` to change
 - All integer columns in OpenAPI spec use `type: number` (not `type: integer`) to avoid Zod v3 `.int()` codegen errors
 
 ## Product
 
 - **Dashboard**: Portfolio capital tracker ($10 → current), chain allocation breakdown, active buy/sell signals, recent trade log
-- **Trade Panel**: Multi-wallet connector (MetaMask + Phantom), token selector, position sizing, DEX swap execution (Uniswap V3 / Jupiter)
+- **Trade Panel**: Authenticated position sizing and DEX swap execution (Uniswap V3 / Jupiter) with server-side wallet custody
 - **Signal Scanner**: IronHawk Microstructure Matrix — order-block detection, fractal CHOCH signals, volume z-score, color-coded states
 - **Portfolio**: Capital growth chart, chain allocation donut, win rate, PnL history
 - **Watchlist**: Token monitoring across all chains

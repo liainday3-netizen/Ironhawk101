@@ -84,6 +84,17 @@ export async function getSolanaBalance(tokenMint?: string): Promise<number> {
   }
 }
 
+export async function getSolanaTokenDecimals(tokenMint: string): Promise<number | null> {
+  try {
+    const conn = getConnection();
+    const supply = await conn.getTokenSupply(new PublicKey(tokenMint));
+    return supply.value.decimals;
+  } catch (err) {
+    logger.error({ err, tokenMint }, "Failed to read Solana token decimals");
+    return null;
+  }
+}
+
 async function getJupiterQuote(
   inputMint: string,
   outputMint: string,

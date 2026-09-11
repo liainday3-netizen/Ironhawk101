@@ -124,7 +124,7 @@ export default function PairDetail() {
       removePair.mutate({ id: pair.id }, {
         onSuccess: () => {
           queryClient.invalidateQueries({ queryKey: getListPairsQueryKey() });
-          setLocation("/");
+          setLocation("/terminal");
         }
       });
     }
@@ -175,7 +175,7 @@ export default function PairDetail() {
       {/* Header */}
       <div className="flex-none p-4 md:p-6 border-b border-border bg-card flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div className="flex items-center gap-4">
-          <button onClick={() => setLocation("/")} className="text-muted-foreground hover:text-foreground transition-colors">
+          <button onClick={() => setLocation("/terminal")} className="text-muted-foreground hover:text-foreground transition-colors">
             <ArrowLeft size={20} />
           </button>
           <div>
