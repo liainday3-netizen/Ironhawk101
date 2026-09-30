@@ -17,9 +17,9 @@ import {
   formatUnits,
   encodeAbiParameters,
   parseAbiParameters,
+  isAddress,
   type Address,
   type Hex,
-  maxUint256,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { mainnet, base } from "viem/chains";
@@ -65,6 +65,36 @@ const ERC20_ABI = [
   { name: "allowance", type: "function", inputs: [{ name: "owner", type: "address" }, { name: "spender", type: "address" }], outputs: [{ name: "", type: "uint256" }] },
 ] as const;
 
+const PERMIT2_ABI = [
+  {
+    name: "allowance",
+    type: "function",
+    stateMutability: "view",
+    inputs: [
+      { name: "owner", type: "address" },
+      { name: "token", type: "address" },
+      { name: "spender", type: "address" },
+    ],
+    outputs: [
+      { name: "amount", type: "uint160" },
+      { name: "expiration", type: "uint48" },
+      { name: "nonce", type: "uint48" },
+    ],
+  },
+  {
+    name: "approve",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "token", type: "address" },
+      { name: "spender", type: "address" },
+      { name: "amount", type: "uint160" },
+      { name: "expiration", type: "uint48" },
+    ],
+    outputs: [],
+  },
+] as const;
+
 const QUOTER_V2_ABI = [
   {
     name: "quoteExactInputSingle",
@@ -97,6 +127,8 @@ export interface SwapResult {
   txHash?: string;
   amountIn: number;
   amountOut: number;
+  amountOutRaw?: string;
+  outputDecimals?: number;
   fee?: number;
   gasUsed?: number;
   error?: string;
@@ -127,17 +159,22 @@ async function getBestQuote(
 ): Promise<{ fee: number; amountOut: bigint; outputDecimals: number } | null> {
   const { viemChain, rpc } = getChainConfig(chain);
   const quoter = QUOTER_V2[chain];
-  if (!quoter) return null;
+  if (!quoter || !isAddress(tokenIn) || !isAddress(tokenOut)) return null;
 
   const publicClient = createPublicClient({ chain: viemChain, transport: http(rpc) });
 
-  // Get output token decimals
-  let outputDecimals = 18;
+  // Decimals are part of the amount contract. Never guess if an RPC read fails.
+  let outputDecimals: number;
   try {
     outputDecimals = Number(await publicClient.readContract({
       address: tokenOut, abi: ERC20_ABI, functionName: "decimals",
     }));
-  } catch { /* default 18 */ }
+    if (!Number.isInteger(outputDecimals) || outputDecimals < 0 || outputDecimals > 18) {
+      return null;
+    }
+  } catch {
+    return null;
+  }
 
   let bestFee = 0;
   let bestOut = 0n;
@@ -166,25 +203,101 @@ async function getBestQuote(
  * Parse the actual received amount from an ERC-20 Transfer event.
  * Looks for Transfer(to=recipientAddress) on the output token in the tx receipt.
  */
-function parseTransferAmountOut(
+function parseTransferAmountOutRaw(
   receipt: { logs: readonly { address: string; topics: readonly string[]; data: string }[] },
   outputToken: Address,
   recipient: Address,
-  decimals: number,
-): number {
-  const recipientPadded = recipient.toLowerCase().replace("0x", "").padStart(64, "0");
+): string {
+  const recipientPadded = `0x${recipient.toLowerCase().replace("0x", "").padStart(64, "0")}`;
+  let total = 0n;
   for (const log of receipt.logs) {
     if (
       log.address.toLowerCase() === outputToken.toLowerCase() &&
       log.topics[0]?.toLowerCase() === TRANSFER_TOPIC.toLowerCase() &&
-      log.topics[2]?.toLowerCase().includes(recipientPadded)
+      log.topics[2]?.toLowerCase() === recipientPadded
     ) {
       try {
-        return Number(formatUnits(BigInt(log.data), decimals));
+        total += BigInt(log.data);
       } catch { /* ignore parse error */ }
     }
   }
-  return 0;
+  return total.toString();
+}
+
+export async function getEvmTokenDecimals(
+  chain: string,
+  tokenAddress: string,
+): Promise<number | null> {
+  if (!RPC_URLS[chain] || !isAddress(tokenAddress)) return null;
+  const { viemChain, rpc } = getChainConfig(chain);
+  try {
+    const decimals = Number(await createPublicClient({
+      chain: viemChain,
+      transport: http(rpc),
+    }).readContract({
+      address: tokenAddress as Address,
+      abi: ERC20_ABI,
+      functionName: "decimals",
+    }));
+    return Number.isInteger(decimals) && decimals >= 0 && decimals <= 18 ? decimals : null;
+  } catch (err) {
+    logger.error({ err, chain }, "Failed to verify EVM token decimals");
+    return null;
+  }
+}
+
+function getSlippageMultiplier(slippagePct: number): bigint {
+  if (!Number.isFinite(slippagePct) || slippagePct <= 0 || slippagePct > 2) {
+    throw new Error("Slippage must be greater than 0% and no more than 2%");
+  }
+  return BigInt(Math.floor((1 - slippagePct / 100) * 10_000));
+}
+
+async function ensureRouterAllowance(
+  chain: string,
+  account: ReturnType<typeof privateKeyToAccount>,
+  walletClient: ReturnType<typeof createWalletClient>,
+  publicClient: ReturnType<typeof createPublicClient>,
+  token: Address,
+  amount: bigint,
+): Promise<void> {
+  const erc20Allowance = await publicClient.readContract({
+    address: token,
+    abi: ERC20_ABI,
+    functionName: "allowance",
+    args: [account.address, PERMIT2],
+  }) as bigint;
+
+  // Approve only this trade amount, not an unlimited allowance.
+  if (erc20Allowance < amount) {
+    const approveTx = await walletClient.writeContract({
+      address: token,
+      abi: ERC20_ABI,
+      functionName: "approve",
+      args: [PERMIT2, amount],
+    });
+    const approval = await publicClient.waitForTransactionReceipt({ hash: approveTx });
+    if (approval.status !== "success") throw new Error("ERC-20 approval transaction reverted");
+  }
+
+  const [permitAmount, expiration] = await publicClient.readContract({
+    address: PERMIT2,
+    abi: PERMIT2_ABI,
+    functionName: "allowance",
+    args: [account.address, token, UNIVERSAL_ROUTER],
+  });
+  const now = BigInt(Math.floor(Date.now() / 1000));
+  if (permitAmount < amount || expiration <= now) {
+    const approveTx = await walletClient.writeContract({
+      address: PERMIT2,
+      abi: PERMIT2_ABI,
+      functionName: "approve",
+      args: [token, UNIVERSAL_ROUTER, amount, now + 600n],
+    });
+    const approval = await publicClient.waitForTransactionReceipt({ hash: approveTx });
+    if (approval.status !== "success") throw new Error("Permit2 approval transaction reverted");
+  }
+  logger.info({ chain, token }, "Trade-limited router allowance ready");
 }
 
 export async function getWalletBalance(chain: string, tokenSymbol: string = "USDC"): Promise<number> {
@@ -228,6 +341,15 @@ export async function executeBuyEVM(
 ): Promise<SwapResult> {
   const key = getPrivateKey(chain);
   if (!key) return { success: false, amountIn: 0, amountOut: 0, error: "No wallet private key configured" };
+  if (
+    !["ethereum", "base"].includes(chain) ||
+    !isAddress(tokenAddress) ||
+    !Number.isFinite(amountUsd) ||
+    amountUsd <= 0 ||
+    amountUsd > 1_000
+  ) {
+    return { success: false, amountIn: amountUsd, amountOut: 0, error: "Invalid EVM buy parameters" };
+  }
 
   const { viemChain, rpc } = getChainConfig(chain);
   const usdcAddress = TOKENS[chain]?.["USDC"];
@@ -239,31 +361,30 @@ export async function executeBuyEVM(
     const walletClient = createWalletClient({ account, chain: viemChain, transport: http(rpc) });
 
     const amountIn = parseUnits(amountUsd.toFixed(6), 6);
+    const balance = await publicClient.readContract({
+      address: usdcAddress,
+      abi: ERC20_ABI,
+      functionName: "balanceOf",
+      args: [account.address],
+    }) as bigint;
+    if (balance < amountIn) {
+      return { success: false, amountIn: amountUsd, amountOut: 0, error: "Insufficient USDC balance" };
+    }
 
     // --- Quote: find best fee tier and compute slippage-protected minimum ---
     const quote = await getBestQuote(chain, usdcAddress, tokenAddress, amountIn);
     if (!quote) {
       return { success: false, amountIn: amountUsd, amountOut: 0, error: "No V3 pool found for this token on any fee tier" };
     }
-    const slippageMultiplier = BigInt(Math.floor((1 - slippagePct / 100) * 10000));
+    const slippageMultiplier = getSlippageMultiplier(slippagePct);
     const amountOutMinimum = (quote.amountOut * slippageMultiplier) / 10000n;
+    if (amountOutMinimum <= 0n) {
+      return { success: false, amountIn: amountUsd, amountOut: 0, error: "Quoted minimum output rounds to zero" };
+    }
 
     logger.info({ chain, tokenAddress, fee: quote.fee, amountIn: amountUsd, amountOutRaw: quote.amountOut.toString() }, "EVM BUY quote");
 
-    // --- Approve USDC to Permit2 if needed ---
-    const allowance = await publicClient.readContract({
-      address: usdcAddress, abi: ERC20_ABI, functionName: "allowance",
-      args: [account.address, PERMIT2],
-    }) as bigint;
-
-    if (allowance < amountIn) {
-      const approveTx = await walletClient.writeContract({
-        address: usdcAddress, abi: ERC20_ABI, functionName: "approve",
-        args: [PERMIT2, maxUint256],
-      });
-      await publicClient.waitForTransactionReceipt({ hash: approveTx });
-      logger.info({ chain, approveTx }, "USDC approved to Permit2");
-    }
+    await ensureRouterAllowance(chain, account, walletClient, publicClient, usdcAddress, amountIn);
 
     // --- Execute swap via Universal Router V3_SWAP_EXACT_IN (command 0x00) ---
     const DEADLINE = BigInt(Math.floor(Date.now() / 1000) + 300);
@@ -280,16 +401,21 @@ export async function executeBuyEVM(
     });
 
     const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
-    const actualOut = parseTransferAmountOut(receipt as any, tokenAddress, account.address, quote.outputDecimals);
+    const amountOutRaw = parseTransferAmountOutRaw(receipt as any, tokenAddress, account.address);
+    const amountOut = Number(formatUnits(BigInt(amountOutRaw), quote.outputDecimals));
+    const success = receipt.status === "success" && BigInt(amountOutRaw) > 0n && Number.isFinite(amountOut);
 
-    logger.info({ chain, txHash, amountUsd, amountOut: actualOut, fee: quote.fee }, "EVM BUY executed");
+    logger.info({ chain, txHash, amountUsd, amountOut, fee: quote.fee }, "EVM BUY executed");
     return {
-      success: receipt.status === "success",
+      success,
       txHash,
       amountIn: amountUsd,
-      amountOut: actualOut,
+      amountOut,
+      amountOutRaw,
+      outputDecimals: quote.outputDecimals,
       fee: quote.fee,
       gasUsed: Number(receipt.gasUsed),
+      error: success ? undefined : "Swap receipt succeeded without a verifiable token output",
     };
   } catch (err: any) {
     logger.error({ err, chain }, "EVM buy execution failed");
@@ -301,11 +427,15 @@ export async function executeSellEVM(
   chain: string,
   tokenAddress: Address,
   tokenAmount: number,
-  tokenDecimals: number = 18,
-  slippagePct: number = 0.5
+  tokenDecimals?: number,
+  slippagePct: number = 0.5,
+  tokenAmountRaw?: string,
 ): Promise<SwapResult> {
   const key = getPrivateKey(chain);
   if (!key) return { success: false, amountIn: 0, amountOut: 0, error: "No wallet private key configured" };
+  if (!["ethereum", "base"].includes(chain) || !isAddress(tokenAddress)) {
+    return { success: false, amountIn: tokenAmount, amountOut: 0, error: "Invalid EVM sell parameters" };
+  }
 
   const { viemChain, rpc } = getChainConfig(chain);
   const usdcAddress = TOKENS[chain]?.["USDC"];
@@ -316,31 +446,43 @@ export async function executeSellEVM(
     const publicClient = createPublicClient({ chain: viemChain, transport: http(rpc) });
     const walletClient = createWalletClient({ account, chain: viemChain, transport: http(rpc) });
 
-    const amountIn = parseUnits(tokenAmount.toFixed(tokenDecimals > 9 ? 9 : tokenDecimals), tokenDecimals);
+    const verifiedDecimals = await getEvmTokenDecimals(chain, tokenAddress);
+    if (verifiedDecimals === null || (tokenDecimals !== undefined && tokenDecimals !== verifiedDecimals)) {
+      return { success: false, amountIn: tokenAmount, amountOut: 0, error: "Could not verify EVM token decimals" };
+    }
+    if (!Number.isFinite(tokenAmount) || tokenAmount <= 0) {
+      return { success: false, amountIn: tokenAmount, amountOut: 0, error: "Sell amount must be positive" };
+    }
+    const amountIn = tokenAmountRaw === undefined
+      ? parseUnits(tokenAmount.toFixed(Math.min(verifiedDecimals, 9)), verifiedDecimals)
+      : /^\d+$/.test(tokenAmountRaw) ? BigInt(tokenAmountRaw) : 0n;
+    if (amountIn <= 0n) {
+      return { success: false, amountIn: tokenAmount, amountOut: 0, error: "Invalid raw token sell amount" };
+    }
+    const tokenBalance = await publicClient.readContract({
+      address: tokenAddress,
+      abi: ERC20_ABI,
+      functionName: "balanceOf",
+      args: [account.address],
+    }) as bigint;
+    if (tokenBalance < amountIn) {
+      return { success: false, amountIn: tokenAmount, amountOut: 0, error: "Wallet token balance is below the requested close amount" };
+    }
 
     // --- Quote: find best fee tier ---
     const quote = await getBestQuote(chain, tokenAddress, usdcAddress, amountIn);
     if (!quote) {
       return { success: false, amountIn: tokenAmount, amountOut: 0, error: "No V3 pool found for this token on any fee tier" };
     }
-    const slippageMultiplier = BigInt(Math.floor((1 - slippagePct / 100) * 10000));
+    const slippageMultiplier = getSlippageMultiplier(slippagePct);
     const amountOutMinimum = (quote.amountOut * slippageMultiplier) / 10000n;
+    if (amountOutMinimum <= 0n) {
+      return { success: false, amountIn: tokenAmount, amountOut: 0, error: "Quoted minimum output rounds to zero" };
+    }
 
     logger.info({ chain, tokenAddress, fee: quote.fee, tokenAmount, amountOutRaw: quote.amountOut.toString() }, "EVM SELL quote");
 
-    // --- Approve token to Permit2 if needed ---
-    const allowance = await publicClient.readContract({
-      address: tokenAddress, abi: ERC20_ABI, functionName: "allowance",
-      args: [account.address, PERMIT2],
-    }) as bigint;
-
-    if (allowance < amountIn) {
-      const approveTx = await walletClient.writeContract({
-        address: tokenAddress, abi: ERC20_ABI, functionName: "approve",
-        args: [PERMIT2, maxUint256],
-      });
-      await publicClient.waitForTransactionReceipt({ hash: approveTx });
-    }
+    await ensureRouterAllowance(chain, account, walletClient, publicClient, tokenAddress, amountIn);
 
     // --- Execute swap via Universal Router ---
     const DEADLINE = BigInt(Math.floor(Date.now() / 1000) + 300);
@@ -357,16 +499,21 @@ export async function executeSellEVM(
     });
 
     const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
-    const actualOut = parseTransferAmountOut(receipt as any, usdcAddress, account.address, 6);
+    const amountOutRaw = parseTransferAmountOutRaw(receipt as any, usdcAddress, account.address);
+    const amountOut = Number(formatUnits(BigInt(amountOutRaw), 6));
+    const success = receipt.status === "success" && BigInt(amountOutRaw) > 0n && Number.isFinite(amountOut);
 
-    logger.info({ chain, txHash, tokenAmount, amountOut: actualOut, fee: quote.fee }, "EVM SELL executed");
+    logger.info({ chain, txHash, tokenAmount, amountOut, fee: quote.fee }, "EVM SELL executed");
     return {
-      success: receipt.status === "success",
+      success,
       txHash,
       amountIn: tokenAmount,
-      amountOut: actualOut,
+      amountOut,
+      amountOutRaw,
+      outputDecimals: 6,
       fee: quote.fee,
       gasUsed: Number(receipt.gasUsed),
+      error: success ? undefined : "Swap receipt succeeded without a verifiable USDC output",
     };
   } catch (err: any) {
     logger.error({ err, chain }, "EVM sell execution failed");
