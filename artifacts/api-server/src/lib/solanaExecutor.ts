@@ -29,6 +29,8 @@ export interface SolanaSwapResult {
   txHash?: string;
   amountIn: number;
   amountOut: number;
+  amountOutRaw?: string;
+  outputDecimals?: number;
   priceImpactPct?: number;
   error?: string;
 }
@@ -98,10 +100,10 @@ export async function getSolanaTokenDecimals(tokenMint: string): Promise<number 
 async function getJupiterQuote(
   inputMint: string,
   outputMint: string,
-  amountLamports: number,
+  amountRaw: string,
   slippageBps: number = 50
 ): Promise<any | null> {
-  const url = `${JUPITER_API}/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${Math.floor(amountLamports)}&slippageBps=${slippageBps}&onlyDirectRoutes=false`;
+  const url = `${JUPITER_API}/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${encodeURIComponent(amountRaw)}&slippageBps=${slippageBps}&onlyDirectRoutes=false`;
   const res = await fetch(url, { signal: AbortSignal.timeout(12000) });
   if (!res.ok) {
     logger.warn({ status: res.status, url }, "Jupiter quote failed");
@@ -134,8 +136,17 @@ async function buildAndSendSwap(
     throw new Error(`Jupiter swap API error ${swapRes.status}: ${body}`);
   }
 
-  const { swapTransaction } = await swapRes.json() as { swapTransaction: string };
+  const swapResponse = await swapRes.json() as {
+    swapTransaction?: string;
+    lastValidBlockHeight?: number;
+  };
+  if (!swapResponse.swapTransaction || !Number.isSafeInteger(swapResponse.lastValidBlockHeight)) {
+    throw new Error("Jupiter swap response is missing transaction expiry information");
+  }
+  const swapTransaction = swapResponse.swapTransaction;
+  const lastValidBlockHeight = swapResponse.lastValidBlockHeight as number;
   const tx = VersionedTransaction.deserialize(Buffer.from(swapTransaction, "base64"));
+  const recentBlockhash = tx.message.recentBlockhash;
   tx.sign([kp]);
 
   const txHash = await conn.sendRawTransaction(tx.serialize(), {
@@ -143,14 +154,87 @@ async function buildAndSendSwap(
     maxRetries: 5,
   });
 
-  // Confirm with timeout
-  const latestBlockhash = await conn.getLatestBlockhash();
-  await conn.confirmTransaction(
-    { signature: txHash, ...latestBlockhash },
-    "confirmed"
-  );
+  // The blockhash and expiry must be those used to build this exact transaction.
+  try {
+    const confirmation = await conn.confirmTransaction(
+      { signature: txHash, blockhash: recentBlockhash, lastValidBlockHeight },
+      "confirmed"
+    );
+    if (confirmation.value.err) {
+      throw new Error(`Solana transaction failed: ${JSON.stringify(confirmation.value.err)}`);
+    }
+  } catch (err) {
+    throw new SubmittedSwapError(
+      err instanceof Error ? err.message : "Transaction confirmation failed",
+      txHash,
+    );
+  }
 
   return txHash;
+}
+
+function validMint(mint: string): boolean {
+  try {
+    new PublicKey(mint);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function validSlippage(slippagePct: number): boolean {
+  return Number.isFinite(slippagePct) && slippagePct > 0 && slippagePct <= 2;
+}
+
+class SubmittedSwapError extends Error {
+  constructor(message: string, readonly signature: string) {
+    super(message);
+    this.name = "SubmittedSwapError";
+  }
+}
+
+function validRawAmount(amount: string): boolean {
+  return /^[0-9]+$/.test(amount) && BigInt(amount) > 0n;
+}
+
+function decimalAmountToRaw(amount: number, decimals: number): string {
+  if (!Number.isFinite(amount) || amount <= 0 || !Number.isInteger(decimals) || decimals < 0 || decimals > 18) {
+    throw new Error("Invalid token amount or decimals");
+  }
+  const text = amount.toString().toLowerCase();
+  const [coefficient, exponentText] = text.split("e");
+  const exponent = exponentText ? Number(exponentText) : 0;
+  const [whole, fraction = ""] = coefficient.split(".");
+  const digits = `${whole}${fraction}`.replace(/^0+(?=\d)/, "");
+  const point = whole.length + exponent + decimals;
+  if (!Number.isInteger(point) || point < 0) throw new Error("Token amount is below token precision");
+  const raw = point >= digits.length
+    ? `${digits}${"0".repeat(point - digits.length)}`
+    : digits.slice(0, point);
+  if (point < digits.length && /[1-9]/.test(digits.slice(point))) {
+    throw new Error("Token amount has more precision than the token supports");
+  }
+  const normalized = raw.replace(/^0+(?=\d)/, "");
+  if (!validRawAmount(normalized)) throw new Error("Token amount must be greater than zero");
+  return normalized;
+}
+
+async function getWalletTokenRawBalance(conn: Connection, owner: PublicKey, mint: string): Promise<bigint> {
+  const accounts = await conn.getParsedTokenAccountsByOwner(owner, { mint: new PublicKey(mint) });
+  return accounts.value.reduce((total, account) => {
+    const raw = account.account.data.parsed?.info?.tokenAmount?.amount;
+    return raw && /^[0-9]+$/.test(raw) ? total + BigInt(raw) : total;
+  }, 0n);
+}
+
+function quoteAmount(quote: any, inputMint: string, outputMint: string, amountRaw: string): string {
+  if (quote.inputMint !== inputMint || quote.outputMint !== outputMint) {
+    throw new Error("Jupiter quote mints do not match requested swap");
+  }
+  if (quote.inAmount !== amountRaw || !validRawAmount(String(quote.outAmount ?? ""))) {
+    throw new Error("Jupiter quote amounts are invalid");
+  }
+  return String(quote.outAmount);
 }
 
 export async function executeBuySolana(
@@ -161,33 +245,63 @@ export async function executeBuySolana(
   const kp = getKeypair();
   if (!kp) return { success: false, amountIn: 0, amountOut: 0, error: "No Solana wallet configured" };
 
+  let submittedSignature: string | undefined;
   try {
     const conn = getConnection();
+    if (!validMint(outputMint) || outputMint === SOL_TOKENS.USDC) {
+      throw new Error("Invalid or unchanged buy token mint");
+    }
+    if (!validSlippage(slippagePct) || !Number.isFinite(amountUsd) || amountUsd <= 0 ||
+        amountUsd > Number.MAX_SAFE_INTEGER / 1_000_000) {
+      throw new Error("Invalid buy amount or slippage");
+    }
+    const outputDecimals = await getSolanaTokenDecimals(outputMint);
+    if (outputDecimals === null || !Number.isInteger(outputDecimals) || outputDecimals < 0 || outputDecimals > 18) {
+      throw new Error("Unable to verify buy token decimals");
+    }
     const slippageBps = Math.round(slippagePct * 100);
     // USDC has 6 decimals
-    const amountLamports = Math.floor(amountUsd * 1_000_000);
+    const amountRaw = decimalAmountToRaw(amountUsd, 6);
+    const walletInputBalance = await getWalletTokenRawBalance(conn, kp.publicKey, SOL_TOKENS.USDC);
+    if (walletInputBalance < BigInt(amountRaw)) {
+      throw new Error("Insufficient USDC balance for buy");
+    }
 
-    const quote = await getJupiterQuote(SOL_TOKENS.USDC, outputMint, amountLamports, slippageBps);
+    const quote = await getJupiterQuote(SOL_TOKENS.USDC, outputMint, amountRaw, slippageBps);
     if (!quote) return { success: false, amountIn: amountUsd, amountOut: 0, error: "Failed to get Jupiter quote" };
+    quoteAmount(quote, SOL_TOKENS.USDC, outputMint, amountRaw);
 
     logger.info({ outputMint, amountUsd, outAmount: quote.outAmount, priceImpact: quote.priceImpactPct }, "Solana BUY quote");
 
+    const outputBefore = await getWalletTokenRawBalance(conn, kp.publicKey, outputMint);
     const txHash = await buildAndSendSwap(kp, quote, conn);
+    submittedSignature = txHash;
 
-    const outDecimals = quote.outputDecimals ?? 6;
-    const outAmount = Number(quote.outAmount) / Math.pow(10, outDecimals);
+    const outputAfter = await getWalletTokenRawBalance(conn, kp.publicKey, outputMint);
+    const outputRaw = outputAfter >= outputBefore ? outputAfter - outputBefore : 0n;
+    const outAmount = Number(outputRaw) / Math.pow(10, outputDecimals);
+    const success = outputRaw > 0n && Number.isFinite(outAmount);
     logger.info({ txHash, amountUsd, outputMint, outAmount }, "Solana BUY executed via Jupiter");
 
     return {
-      success: true,
+      success,
       txHash,
       amountIn: amountUsd,
       amountOut: outAmount,
+      amountOutRaw: outputRaw.toString(),
+      outputDecimals,
       priceImpactPct: Number(quote.priceImpactPct ?? 0),
+      error: success ? undefined : "Confirmed swap produced no verifiable wallet token balance increase",
     };
   } catch (err: any) {
     logger.error({ err }, "Solana buy execution failed");
-    return { success: false, amountIn: amountUsd, amountOut: 0, error: err?.message ?? String(err) };
+    return {
+      success: false,
+      txHash: submittedSignature ?? (err instanceof SubmittedSwapError ? err.signature : undefined),
+      amountIn: amountUsd,
+      amountOut: 0,
+      error: err?.message ?? String(err),
+    };
   }
 }
 
@@ -195,36 +309,68 @@ export async function executeSellSolana(
   inputMint: string,
   tokenDecimals: number,
   tokenAmount: number,
-  slippagePct: number = 0.5
+  amountRaw?: string
 ): Promise<SolanaSwapResult> {
   const kp = getKeypair();
   if (!kp) return { success: false, amountIn: 0, amountOut: 0, error: "No Solana wallet configured" };
 
+  let submittedSignature: string | undefined;
   try {
     const conn = getConnection();
+    if (!validMint(inputMint) || inputMint === SOL_TOKENS.USDC || !Number.isInteger(tokenDecimals) ||
+        tokenDecimals < 0 || tokenDecimals > 18 || !Number.isFinite(tokenAmount) || tokenAmount <= 0 ||
+        tokenAmount > Number.MAX_SAFE_INTEGER) {
+      throw new Error("Invalid sell mint, amount, or token decimals");
+    }
+    const verifiedDecimals = await getSolanaTokenDecimals(inputMint);
+    if (verifiedDecimals === null || verifiedDecimals !== tokenDecimals) {
+      throw new Error("Provided token decimals do not match the mint");
+    }
+    const rawAmount = amountRaw ?? decimalAmountToRaw(tokenAmount, tokenDecimals);
+    if (!validRawAmount(rawAmount)) throw new Error("Invalid raw sell amount");
+    const slippagePct = 0.5;
     const slippageBps = Math.round(slippagePct * 100);
-    const amountLamports = Math.floor(tokenAmount * Math.pow(10, tokenDecimals));
+    const walletInputBalance = await getWalletTokenRawBalance(conn, kp.publicKey, inputMint);
+    if (walletInputBalance < BigInt(rawAmount)) {
+      throw new Error("Insufficient token balance for sell");
+    }
 
-    const quote = await getJupiterQuote(inputMint, SOL_TOKENS.USDC, amountLamports, slippageBps);
+    const quote = await getJupiterQuote(inputMint, SOL_TOKENS.USDC, rawAmount, slippageBps);
     if (!quote) return { success: false, amountIn: tokenAmount, amountOut: 0, error: "Failed to get Jupiter quote" };
+    quoteAmount(quote, inputMint, SOL_TOKENS.USDC, rawAmount);
 
     logger.info({ inputMint, tokenAmount, outAmount: quote.outAmount, priceImpact: quote.priceImpactPct }, "Solana SELL quote");
 
+    const outputDecimals = await getSolanaTokenDecimals(SOL_TOKENS.USDC);
+    if (outputDecimals === null || outputDecimals !== 6) throw new Error("Unable to verify USDC decimals");
+    const outputBefore = await getWalletTokenRawBalance(conn, kp.publicKey, SOL_TOKENS.USDC);
     const txHash = await buildAndSendSwap(kp, quote, conn);
+    submittedSignature = txHash;
 
-    // Output is USDC (6 decimals)
-    const outAmount = Number(quote.outAmount) / 1_000_000;
+    const outputAfter = await getWalletTokenRawBalance(conn, kp.publicKey, SOL_TOKENS.USDC);
+    const outputRaw = outputAfter >= outputBefore ? outputAfter - outputBefore : 0n;
+    const outAmount = Number(outputRaw) / Math.pow(10, outputDecimals);
+    const success = outputRaw > 0n && Number.isFinite(outAmount);
     logger.info({ txHash, tokenAmount, inputMint, outAmount }, "Solana SELL executed via Jupiter");
 
     return {
-      success: true,
+      success,
       txHash,
       amountIn: tokenAmount,
       amountOut: outAmount,
+      amountOutRaw: outputRaw.toString(),
+      outputDecimals,
       priceImpactPct: Number(quote.priceImpactPct ?? 0),
+      error: success ? undefined : "Confirmed swap produced no verifiable wallet USDC balance increase",
     };
   } catch (err: any) {
     logger.error({ err }, "Solana sell execution failed");
-    return { success: false, amountIn: tokenAmount, amountOut: 0, error: err?.message ?? String(err) };
+    return {
+      success: false,
+      txHash: submittedSignature ?? (err instanceof SubmittedSwapError ? err.signature : undefined),
+      amountIn: tokenAmount,
+      amountOut: 0,
+      error: err?.message ?? String(err),
+    };
   }
 }

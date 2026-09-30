@@ -255,9 +255,9 @@ function getSlippageMultiplier(slippagePct: number): bigint {
 
 async function ensureRouterAllowance(
   chain: string,
-  account: ReturnType<typeof privateKeyToAccount>,
-  walletClient: ReturnType<typeof createWalletClient>,
-  publicClient: ReturnType<typeof createPublicClient>,
+  account: any,
+  walletClient: any,
+  publicClient: any,
   token: Address,
   amount: bigint,
 ): Promise<void> {
@@ -286,13 +286,13 @@ async function ensureRouterAllowance(
     functionName: "allowance",
     args: [account.address, token, UNIVERSAL_ROUTER],
   });
-  const now = BigInt(Math.floor(Date.now() / 1000));
+  const now = Math.floor(Date.now() / 1000);
   if (permitAmount < amount || expiration <= now) {
     const approveTx = await walletClient.writeContract({
       address: PERMIT2,
       abi: PERMIT2_ABI,
       functionName: "approve",
-      args: [token, UNIVERSAL_ROUTER, amount, now + 600n],
+      args: [token, UNIVERSAL_ROUTER, amount, now + 600],
     });
     const approval = await publicClient.waitForTransactionReceipt({ hash: approveTx });
     if (approval.status !== "success") throw new Error("Permit2 approval transaction reverted");
@@ -355,6 +355,7 @@ export async function executeBuyEVM(
   const usdcAddress = TOKENS[chain]?.["USDC"];
   if (!usdcAddress) return { success: false, amountIn: 0, amountOut: 0, error: `No USDC token for chain ${chain}` };
 
+  let submittedTxHash: Hex | undefined;
   try {
     const account = privateKeyToAccount(key);
     const publicClient = createPublicClient({ chain: viemChain, transport: http(rpc) });
@@ -399,6 +400,7 @@ export async function executeBuyEVM(
       functionName: "execute",
       args: ["0x00" as Hex, [swapParams], DEADLINE],
     });
+    submittedTxHash = txHash;
 
     const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
     const amountOutRaw = parseTransferAmountOutRaw(receipt as any, tokenAddress, account.address);
@@ -419,7 +421,7 @@ export async function executeBuyEVM(
     };
   } catch (err: any) {
     logger.error({ err, chain }, "EVM buy execution failed");
-    return { success: false, amountIn: amountUsd, amountOut: 0, error: err?.message ?? String(err) };
+    return { success: false, txHash: submittedTxHash, amountIn: amountUsd, amountOut: 0, error: err?.message ?? String(err) };
   }
 }
 
@@ -441,6 +443,7 @@ export async function executeSellEVM(
   const usdcAddress = TOKENS[chain]?.["USDC"];
   if (!usdcAddress) return { success: false, amountIn: 0, amountOut: 0, error: "No USDC token" };
 
+  let submittedTxHash: Hex | undefined;
   try {
     const account = privateKeyToAccount(key);
     const publicClient = createPublicClient({ chain: viemChain, transport: http(rpc) });
@@ -497,6 +500,7 @@ export async function executeSellEVM(
       functionName: "execute",
       args: ["0x00" as Hex, [swapParams], DEADLINE],
     });
+    submittedTxHash = txHash;
 
     const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
     const amountOutRaw = parseTransferAmountOutRaw(receipt as any, usdcAddress, account.address);
@@ -517,6 +521,6 @@ export async function executeSellEVM(
     };
   } catch (err: any) {
     logger.error({ err, chain }, "EVM sell execution failed");
-    return { success: false, amountIn: tokenAmount, amountOut: 0, error: err?.message ?? String(err) };
+    return { success: false, txHash: submittedTxHash, amountIn: tokenAmount, amountOut: 0, error: err?.message ?? String(err) };
   }
 }
