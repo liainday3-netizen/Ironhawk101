@@ -1,16 +1,19 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { ClerkProvider, Show, SignIn, SignUp } from "@clerk/react";
+import { ClerkProvider, Show, SignIn, SignUp, useClerk } from "@clerk/react";
+import { publishableKeyFromHost } from "@clerk/react/internal";
+import { shadcn } from "@clerk/themes";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/not-found";
-import { Route, Switch, Router as WouterRouter, Link, Redirect } from "wouter";
+import { Route, Switch, Router as WouterRouter, Link, Redirect, useLocation } from "wouter";
 import { Layout } from "./components/Layout";
 import Home from "./pages/Home";
 import Signals from "./pages/Signals";
 import Market from "./pages/Market";
 import PairDetail from "./pages/PairDetail";
 import Capital from "./pages/Capital";
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -152,28 +155,132 @@ function SignUpPage() {
   );
 }
 
-function App() {
+const clerkAppearance = {
+  theme: shadcn,
+  cssLayerName: "clerk",
+  options: {
+    logoPlacement: "inside" as const,
+    logoLinkUrl: basePath || "/",
+    logoImageUrl: `${window.location.origin}${basePath}/logo.svg`,
+  },
+  variables: {
+    colorPrimary: "#00ff88",
+    colorForeground: "#dce3eb",
+    colorMutedForeground: "#8492a3",
+    colorDanger: "#ff1744",
+    colorBackground: "#070b12",
+    colorInput: "#0b1019",
+    colorInputForeground: "#dce3eb",
+    colorNeutral: "#273244",
+    fontFamily: "'Space Mono', monospace",
+    borderRadius: "0px",
+  },
+  elements: {
+    rootBox: "w-full flex justify-center",
+    cardBox: "bg-[#070b12] border border-[#273244] w-[440px] max-w-full overflow-hidden",
+    card: "!shadow-none !border-0 !bg-transparent !rounded-none",
+    footer: "!shadow-none !border-0 !bg-transparent !rounded-none",
+    headerTitle: "text-[#dce3eb] font-mono",
+    headerSubtitle: "text-[#8492a3] font-mono",
+    socialButtonsBlockButtonText: "text-[#dce3eb] font-mono",
+    formFieldLabel: "text-[#dce3eb] font-mono",
+    footerActionLink: "text-[#00ff88] font-mono",
+    footerActionText: "text-[#8492a3] font-mono",
+    dividerText: "text-[#8492a3] font-mono",
+    identityPreviewEditButton: "text-[#00ff88] font-mono",
+    formFieldSuccessText: "text-[#00ff88] font-mono",
+    alertText: "text-[#dce3eb] font-mono",
+    socialButtonsBlockButton: "border border-[#273244] bg-[#0b1019]",
+    formButtonPrimary: "font-mono",
+    formFieldInput: "font-mono",
+    footerAction: "border-t border-[#273244]",
+    dividerLine: "bg-[#273244]",
+    alert: "border border-[#273244]",
+    otpCodeFieldInput: "font-mono",
+  },
+};
+
+function stripBase(path: string): string {
+  return basePath && path.startsWith(basePath)
+    ? path.slice(basePath.length) || "/"
+    : path;
+}
+
+function ClerkQueryClientCacheInvalidator() {
+  const { addListener } = useClerk();
+  const queryClient = useQueryClient();
+  const previousUserId = useRef<string | null | undefined>(undefined);
+
+  useEffect(() => {
+    const unsubscribe = addListener(({ user }) => {
+      const userId = user?.id ?? null;
+      if (previousUserId.current !== undefined && previousUserId.current !== userId) {
+        queryClient.clear();
+      }
+      previousUserId.current = userId;
+    });
+    return unsubscribe;
+  }, [addListener, queryClient]);
+
+  return null;
+}
+
+function ClerkProviderWithRoutes({ children }: { children: ReactNode }) {
+  const [, setLocation] = useLocation();
+  const publishableKey = publishableKeyFromHost(
+    window.location.hostname,
+    import.meta.env.VITE_CLERK_PUBLISHABLE_KEY,
+  );
   const clerkProxyUrl = import.meta.env.VITE_CLERK_PROXY_URL;
-  const publishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
+
+  if (!publishableKey) {
+    throw new Error("Missing Clerk publishable key");
+  }
 
   return (
     <ClerkProvider
       publishableKey={publishableKey}
       proxyUrl={clerkProxyUrl}
+      appearance={clerkAppearance}
       signInUrl={`${basePath}/sign-in`}
       signUpUrl={`${basePath}/sign-up`}
+      localization={{
+        signIn: {
+          start: {
+            title: "IRONHAWK ACCESS",
+            subtitle: "Sign in to your IronHawk DEX Matrix account",
+          },
+        },
+        signUp: {
+          start: {
+            title: "CREATE IRONHAWK ACCOUNT",
+            subtitle: "Register for authenticated market access",
+          },
+        },
+      }}
+      routerPush={(to) => setLocation(stripBase(to))}
+      routerReplace={(to) => setLocation(stripBase(to), { replace: true })}
     >
-      <QueryClientProvider client={queryClient}>
-        <DarkModeProvider>
-          <TooltipProvider>
-            <WouterRouter base={basePath}>
-              <Router />
-            </WouterRouter>
-            <Toaster />
-          </TooltipProvider>
-        </DarkModeProvider>
-      </QueryClientProvider>
+      <ClerkQueryClientCacheInvalidator />
+      {children}
     </ClerkProvider>
+  );
+}
+
+function App() {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <DarkModeProvider>
+        <TooltipProvider>
+          <WouterRouter base={basePath}>
+            <ClerkProviderWithRoutes>
+              <Router />
+            </ClerkProviderWithRoutes>
+          </WouterRouter>
+          <Toaster />
+        </TooltipProvider>
+      </DarkModeProvider>
+    </QueryClientProvider>
   );
 }
 

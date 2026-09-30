@@ -9,12 +9,12 @@ import {
 } from "../lib/capitalScaling";
 import { executeSignal, closePosition } from "../lib/tradeExecutor";
 import { requireTradingAccess } from "../middlewares/auth";
-import { getTradingConfigurationError } from "../lib/tradingGuard";
+import { getTradingConfigurationError, getCloseTradingConfigurationError } from "../lib/tradingGuard";
 
 const router = Router();
 
 // GET /trader/positions
-router.get("/trader/positions", async (req, res) => {
+router.get("/trader/positions", requireTradingAccess, async (req, res) => {
   const status = String(req.query.status ?? "all");
   const chain = String(req.query.chain ?? "all");
 
@@ -43,6 +43,9 @@ router.get("/trader/positions", async (req, res) => {
       entryAmountUsd: p.entryAmountUsd,
       tokenAmountIn: p.tokenAmountIn,
       tokenAmountOut: p.tokenAmountOut,
+      remainingTokenAmountRaw: p.remainingTokenAmountRaw ?? null,
+      tokenDecimals: p.tokenDecimals ?? null,
+      remainingCostBasisUsd: p.remainingCostBasisUsd ?? null,
       entryTxHash: p.entryTxHash ?? null,
       capitalAtEntry: p.capitalAtEntry,
       riskPct: p.riskPct,
@@ -74,6 +77,11 @@ router.post("/trader/positions/:id/close", requireTradingAccess, async (req, res
   const pctToClose = Number(req.body?.pctToClose ?? 100);
   if (!Number.isFinite(pctToClose) || pctToClose < 1 || pctToClose > 100) {
     res.status(400).json({ error: "pctToClose must be 1–100" });
+    return;
+  }
+  const closeConfigurationError = getCloseTradingConfigurationError();
+  if (closeConfigurationError) {
+    res.status(503).json({ error: closeConfigurationError });
     return;
   }
 
@@ -133,7 +141,7 @@ router.post("/trader/execute", requireTradingAccess, async (req, res) => {
 });
 
 // GET /trader/capital
-router.get("/trader/capital", async (_req, res) => {
+router.get("/trader/capital", requireTradingAccess, async (_req, res) => {
   const summary = await getPerformanceSummary();
   if (summary.length === 0) {
     await Promise.all([
@@ -258,7 +266,7 @@ router.patch("/trader/capital", requireTradingAccess, async (req, res) => {
 });
 
 // GET /trader/performance
-router.get("/trader/performance", async (_req, res) => {
+router.get("/trader/performance", requireTradingAccess, async (_req, res) => {
   const chains = await getPerformanceSummary();
 
   const totalPnlUsd = chains.reduce((s, c) => s + c.totalPnlUsd, 0);

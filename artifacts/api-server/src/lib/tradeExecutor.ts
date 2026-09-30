@@ -7,11 +7,25 @@ import { db, positionsTable, watchedPairsTable } from "@workspace/db";
 import { eq, and, inArray } from "drizzle-orm";
 import { logger } from "./logger";
 import { calculatePositionSize, recordTradeResult, canOpenPosition } from "./capitalScaling";
-import { executeBuyEVM, executeSellEVM, getWalletAddress } from "./evmExecutor";
+import {
+  executeBuyEVM,
+  executeSellEVM,
+  getEvmTokenDecimals,
+  getWalletAddress,
+} from "./evmExecutor";
 import { executeBuySolana, executeSellSolana, getSolanaWalletAddress } from "./solanaExecutor";
 import { getSolanaTokenDecimals } from "./solanaExecutor";
-import { getTradingConfigurationError } from "./tradingGuard";
+import {
+  getCloseTradingConfigurationError,
+  getTradingConfigurationError,
+} from "./tradingGuard";
+import { getPairInfo } from "./marketData";
+import { acquireAdvisoryLock } from "./advisoryLock";
 import type { Address } from "viem";
+
+const TRADE_LOCK_NAMESPACE = 4242;
+const MAX_SIGNAL_AGE_MS = 90_000;
+const MAX_ENTRY_PRICE_DRIFT_PCT = 2;
 
 export interface ExecuteSignalOptions {
   pairId: number;
@@ -30,6 +44,24 @@ export interface ExecuteSignalOptions {
 }
 
 export async function executeSignal(opts: ExecuteSignalOptions): Promise<{
+  success: boolean;
+  positionId?: number;
+  txHash?: string;
+  error?: string;
+  positionSizeUsd?: number;
+}> {
+  const release = await acquireAdvisoryLock(TRADE_LOCK_NAMESPACE, 1);
+  if (!release) {
+    return { success: false, error: "Another trade is in progress; retry after it completes" };
+  }
+  try {
+    return await executeSignalLocked(opts);
+  } finally {
+    await release();
+  }
+}
+
+async function executeSignalLocked(opts: ExecuteSignalOptions): Promise<{
   success: boolean;
   positionId?: number;
   txHash?: string;
@@ -61,9 +93,55 @@ export async function executeSignal(opts: ExecuteSignalOptions): Promise<{
     return { success: false, error: "Token address does not match the watched pair" };
   }
 
-  const tradingConfigError = getTradingConfigurationError();
+  const tradingConfigError = opts.direction === "BUY"
+    ? getTradingConfigurationError()
+    : getCloseTradingConfigurationError();
   if (tradingConfigError) {
     return { success: false, error: tradingConfigError };
+  }
+
+  const scannedAt = pair.lastScannedAt?.getTime() ?? 0;
+  const scanAgeMs = Date.now() - scannedAt;
+  if (scanAgeMs < 0 || scanAgeMs > MAX_SIGNAL_AGE_MS) {
+    return { success: false, error: "Market signal is stale; wait for a fresh scanner update" };
+  }
+  if (
+    pair.executionGuard !== "ADAPTIVE_GUARDS_CLEAR" ||
+    !Number.isFinite(pair.currentPrice) ||
+    pair.currentPrice <= 0
+  ) {
+    return {
+      success: false,
+      error: pair.executionGuard || "Pair is blocked by the market safety checks",
+    };
+  }
+
+  const requiredState = opts.direction === "BUY" ? "BULL_EXEC" : "BEAR_EXEC";
+  if (pair.state !== requiredState) {
+    return { success: false, error: `Fresh ${requiredState} signal required for ${opts.direction}` };
+  }
+
+  // Recheck the DEX listing at execution time. A watched pair may have changed
+  // its base token, lost liquidity, or stopped returning current market data.
+  const market = await getPairInfo(pair.pairAddress, chain);
+  if (
+    !market ||
+    !Number.isFinite(market.price) ||
+    market.price <= 0 ||
+    !Number.isFinite(market.liquidity) ||
+    market.liquidity < 100_000
+  ) {
+    return { success: false, error: "Fresh market data or minimum $100,000 liquidity check failed" };
+  }
+  const marketTokenMatches = chain === "solana"
+    ? market.baseTokenAddress === expectedTokenAddress
+    : market.baseTokenAddress.toLowerCase() === expectedTokenAddress.toLowerCase();
+  if (!marketTokenMatches) {
+    return { success: false, error: "Live DEX base token does not match the watched token" };
+  }
+  const priceDriftPct = Math.abs(market.price - pair.currentPrice) / pair.currentPrice * 100;
+  if (priceDriftPct > MAX_ENTRY_PRICE_DRIFT_PCT) {
+    return { success: false, error: "Market moved more than 2% since the last scan; trade blocked" };
   }
 
   // This is a spot DEX terminal. A BEAR signal closes an existing long; it
@@ -88,20 +166,23 @@ export async function executeSignal(opts: ExecuteSignalOptions): Promise<{
     };
   }
 
-  const { allowed, reason } = await canOpenPosition(chain);
+  const { allowed, reason } = await canOpenPosition(chain, {
+    requireAutoExecute: opts.signalId !== undefined,
+  });
   if (!allowed) return { success: false, error: reason };
 
   const sizing = await calculatePositionSize(chain, {
-    marketRegime: opts.marketRegime,
-    confidenceScore: opts.confidenceScore,
-    liquidityScore: opts.liquidityScore,
-    suggestedStopLossPct: opts.suggestedStopLossPct,
-    executionAllowed: opts.executionGuard === "ADAPTIVE_GUARDS_CLEAR",
-    executionGuard: opts.executionGuard,
+    marketRegime: pair.marketRegime,
+    confidenceScore: pair.confidenceScore,
+    liquidityScore: pair.liquidityScore,
+    suggestedStopLossPct: pair.adaptiveStopLossPct,
+    executionAllowed: true,
+    executionGuard: pair.executionGuard,
   });
   if (sizing.riskPct <= 0) {
-    return { success: false, error: opts.executionGuard ?? "Adaptive risk is zero" };
+    return { success: false, error: pair.executionGuard ?? "Adaptive risk is zero" };
   }
+  const positionSizeUsd = Math.min(sizing.positionSizeUsd, 1_000);
   const walletAddress = chain === "solana"
     ? await getSolanaWalletAddress()
     : await getWalletAddress(chain);
@@ -112,11 +193,12 @@ export async function executeSignal(opts: ExecuteSignalOptions): Promise<{
 
   let txResult;
   if (chain === "solana") {
-    txResult = await executeBuySolana(expectedTokenAddress, sizing.positionSizeUsd);
+    txResult = await executeBuySolana(expectedTokenAddress, positionSizeUsd);
   } else {
-    txResult = await executeBuyEVM(chain, expectedTokenAddress as Address, sizing.positionSizeUsd);
+    txResult = await executeBuyEVM(chain, expectedTokenAddress as Address, positionSizeUsd);
   }
 
+  const stopLossPct = pair.adaptiveStopLossPct ?? sizing.stopLossPct;
   const [position] = await db
     .insert(positionsTable)
     .values({
@@ -126,37 +208,69 @@ export async function executeSignal(opts: ExecuteSignalOptions): Promise<{
       chain,
       dex: pair.dex,
       direction: opts.direction,
-      status: txResult.success ? "OPEN" : "FAILED",
-      entryPrice: pair.currentPrice,
-      entryAmountUsd: sizing.positionSizeUsd,
+      status: "EXECUTING",
+      entryPrice: market.price,
+      entryAmountUsd: positionSizeUsd,
       tokenAmountIn: txResult.amountIn,
-      tokenAmountOut: txResult.amountOut,
+      tokenAmountOut: 0,
+      remainingTokenAmountRaw: null,
+      remainingCostBasisUsd: positionSizeUsd,
+      tokenDecimals: null,
       entryTxHash: txResult.txHash ?? null,
       capitalAtEntry: sizing.capitalAtEntry,
       riskPct: sizing.riskPct,
       obHigh: opts.obHigh,
       obLow: opts.obLow,
-      stopLossPrice: pair.currentPrice * (1 - (opts.suggestedStopLossPct ?? sizing.stopLossPct) / 100),
-      stopLossPct: opts.suggestedStopLossPct ?? sizing.stopLossPct,
+      stopLossPrice: market.price * (1 - stopLossPct / 100),
+      stopLossPct,
       tpLevels: JSON.stringify(sizing.tpLevels),
       walletAddress,
       notes: `Auto-executed: ${opts.ltfMessage} | Tier: ${sizing.scalingTier} | Regime: ${opts.marketRegime ?? "UNKNOWN"} | Confidence: ${opts.confidenceScore ?? 0}`,
     })
     .returning();
 
-  if (txResult.success) {
+  const hasExactOutput = Boolean(txResult.amountOutRaw) &&
+    /^\d+$/.test(txResult.amountOutRaw ?? "") &&
+    BigInt(txResult.amountOutRaw ?? "0") > 0n &&
+    Number.isInteger(txResult.outputDecimals);
+  const reconciledSuccess = txResult.success && hasExactOutput && txResult.amountOut > 0;
+  const finalStatus = reconciledSuccess
+    ? "OPEN"
+    : txResult.txHash
+      ? "RECONCILIATION_REQUIRED"
+      : "FAILED";
+
+  await db
+    .update(positionsTable)
+    .set({
+      status: finalStatus,
+      tokenAmountIn: txResult.amountIn,
+      tokenAmountOut: reconciledSuccess ? txResult.amountOut : 0,
+      remainingTokenAmountRaw: reconciledSuccess ? txResult.amountOutRaw! : null,
+      remainingCostBasisUsd: reconciledSuccess ? positionSizeUsd : null,
+      tokenDecimals: reconciledSuccess ? txResult.outputDecimals! : null,
+      entryTxHash: txResult.txHash ?? null,
+      lastUpdatedAt: new Date(),
+    })
+    .where(eq(positionsTable.id, position.id));
+
+  if (reconciledSuccess) {
     logger.info(
-      { positionId: position.id, chain, direction: opts.direction, sizeUsd: sizing.positionSizeUsd },
+      { positionId: position.id, chain, direction: opts.direction, sizeUsd: positionSizeUsd },
       "Position opened successfully"
     );
   }
 
   return {
-    success: txResult.success,
+    success: reconciledSuccess,
     positionId: position.id,
     txHash: txResult.txHash,
-    error: txResult.error,
-    positionSizeUsd: sizing.positionSizeUsd,
+    error: reconciledSuccess
+      ? undefined
+      : txResult.error ?? (txResult.txHash
+        ? "Transaction was submitted but its result needs reconciliation; do not retry"
+        : "Trade failed before confirmation"),
+    positionSizeUsd,
   };
 }
 

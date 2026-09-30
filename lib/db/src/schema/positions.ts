@@ -21,6 +21,11 @@ export const positionsTable = pgTable("positions", {
   entryAmountUsd: real("entry_amount_usd").notNull(),
   tokenAmountIn: real("token_amount_in").notNull(),
   tokenAmountOut: real("token_amount_out").notNull(),
+  // Exact atomic-unit accounting is required for subsequent on-chain sells.
+  // Nullable to preserve existing positions that predate exact amount tracking.
+  remainingTokenAmountRaw: text("remaining_token_amount_raw"),
+  tokenDecimals: integer("token_decimals"),
+  remainingCostBasisUsd: real("remaining_cost_basis_usd"),
   entryTxHash: text("entry_tx_hash"),
 
   // Capital context at time of entry

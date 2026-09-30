@@ -59,6 +59,7 @@ function getScalingTier(capital: number): {
 
 export const MIN_CAPITAL_USD = 10;
 export const MIN_POSITION_USD = 1;
+export const MAX_LIVE_POSITION_USD = 1_000;
 
 export async function getOrCreateCapitalConfig(chain: string) {
   const existing = await db
@@ -118,7 +119,10 @@ export async function calculatePositionSize(
     : 1;
   const riskPct = baseRiskPct * regimeMultiplier * confidenceMultiplier * liquidityMultiplier;
   const rawSize = config.currentCapitalUsd * (riskPct / 100);
-  const positionSizeUsd = Math.max(MIN_POSITION_USD, Math.min(rawSize, config.maxPositionUsd));
+  const positionSizeUsd = Math.max(
+    MIN_POSITION_USD,
+    Math.min(rawSize, config.maxPositionUsd, MAX_LIVE_POSITION_USD),
+  );
 
   const tpLevels: TakeProfitLevel[] = JSON.parse(config.tpLevels || JSON.stringify(DEFAULT_TP_LEVELS));
 
@@ -164,15 +168,20 @@ export async function recordTradeResult(
   );
 }
 
-export async function canOpenPosition(chain: string): Promise<{ allowed: boolean; reason?: string }> {
+export async function canOpenPosition(
+  chain: string,
+  options: { requireAutoExecute?: boolean } = {},
+): Promise<{ allowed: boolean; reason?: string }> {
   const config = await getOrCreateCapitalConfig(chain);
-  if (!config.autoExecute) return { allowed: false, reason: "Auto-execute is disabled" };
+  if ((options.requireAutoExecute ?? true) && !config.autoExecute) {
+    return { allowed: false, reason: "Auto-execute is disabled" };
+  }
 
   const openCount = await db
     .select({ count: sql<number>`count(*)::int` })
     .from(positionsTable)
     .where(
-      sql`${positionsTable.chain} = ${chain} AND ${positionsTable.status} IN ('OPEN','PARTIAL')`
+      sql`${positionsTable.chain} = ${chain} AND ${positionsTable.status} IN ('OPEN','PARTIAL','EXECUTING','CLOSING','RECONCILIATION_REQUIRED')`
     );
 
   const count = openCount[0]?.count ?? 0;
@@ -219,7 +228,8 @@ export async function getPerformanceSummary(chain?: string) {
       riskPct: c.riskPct,
       nextPositionSizeUsd: Math.min(
         c.currentCapitalUsd * (c.riskPct / 100),
-        c.maxPositionUsd
+        c.maxPositionUsd,
+        MAX_LIVE_POSITION_USD,
       ),
       autoExecute: c.autoExecute,
       walletAddress: c.walletAddress,
