@@ -10,5 +10,4 @@ export interface ExecuteSignalInput {
   pairId: number;
   direction: string;
   tokenAddress: string;
-  tokenDecimals?: number;
 }

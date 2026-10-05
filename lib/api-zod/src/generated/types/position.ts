@@ -21,6 +21,12 @@ export interface Position {
   tokenAmountIn: number;
   tokenAmountOut: number;
   /** @nullable */
+  remainingTokenAmountRaw?: string | null;
+  /** @nullable */
+  tokenDecimals?: number | null;
+  /** @nullable */
+  remainingCostBasisUsd?: number | null;
+  /** @nullable */
   entryTxHash?: string | null;
   capitalAtEntry: number;
   riskPct: number;

@@ -5,6 +5,7 @@ import { format } from "date-fns";
 import { ArrowLeft, Trash2, Activity, Target, TrendingUp, TrendingDown } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useState, useMemo } from "react";
+import { PairTradePanel } from "@/components/PairTradePanel";
 
 const STATE_BADGE: Record<string, string> = {
   BULL_EXEC: "text-green-500 bg-green-500/10 border-green-500/30",
@@ -261,6 +262,8 @@ export default function PairDetail() {
             </div>
           </div>
         )}
+
+        {pair && <PairTradePanel pair={pair} />}
 
         {/* OHLCV Candlestick Chart */}
         <div className="flex-1 border border-border bg-card flex flex-col min-h-[420px]">

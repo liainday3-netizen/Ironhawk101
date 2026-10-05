@@ -5,8 +5,21 @@
  * IronHawk DEX Matrix API
  * OpenAPI spec version: 0.2.0
  */
+export type HealthStatusStatus = typeof HealthStatusStatus[keyof typeof HealthStatusStatus];
+
+
+export const HealthStatusStatus = {
+  EXECUTING: 'EXECUTING',
+  OPEN: 'OPEN',
+  PARTIAL: 'PARTIAL',
+  CLOSING: 'CLOSING',
+  CLOSED: 'CLOSED',
+  FAILED: 'FAILED',
+  RECONCILIATION_REQUIRED: 'RECONCILIATION_REQUIRED',
+} as const;
+
 export interface HealthStatus {
-  status: string;
+  status: HealthStatusStatus;
 }
 
 export interface WatchedPair {
@@ -130,6 +143,12 @@ export interface Position {
   tokenAmountIn: number;
   tokenAmountOut: number;
   /** @nullable */
+  remainingTokenAmountRaw?: string | null;
+  /** @nullable */
+  tokenDecimals?: number | null;
+  /** @nullable */
+  remainingCostBasisUsd?: number | null;
+  /** @nullable */
   entryTxHash?: string | null;
   capitalAtEntry: number;
   riskPct: number;
@@ -180,7 +199,6 @@ export interface ExecuteSignalInput {
   pairId: number;
   direction: string;
   tokenAddress: string;
-  tokenDecimals?: number;
 }
 
 export interface ExecuteResult {
@@ -193,6 +211,15 @@ export interface ExecuteResult {
   positionSizeUsd?: number | null;
   /** @nullable */
   error?: string | null;
+}
+
+export interface TradingStatus {
+  newTradesEnabled: boolean;
+  closesEnabled: boolean;
+  /** @nullable */
+  newTradeReason?: string | null;
+  /** @nullable */
+  closeReason?: string | null;
 }
 
 export interface CapitalSummary {
@@ -243,6 +270,10 @@ limit?: number;
 export type SearchPairsParams = {
 q: string;
 chain?: string;
+/**
+ * @minimum 1
+ */
+pairId?: number;
 };
 
 export type GetTrendingPairsParams = {
@@ -258,5 +289,9 @@ timeframe?: string;
 export type ListPositionsParams = {
 status?: string;
 chain?: string;
+/**
+ * @minimum 1
+ */
+pairId?: number;
 };
 

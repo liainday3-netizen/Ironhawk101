@@ -12,7 +12,7 @@ import * as zod from 'zod';
  * @summary Health check
  */
 export const HealthCheckResponse = zod.object({
-  "status": zod.string()
+  "status": zod.enum(['EXECUTING', 'OPEN', 'PARTIAL', 'CLOSING', 'CLOSED', 'FAILED', 'RECONCILIATION_REQUIRED'])
 })
 
 
@@ -155,9 +155,13 @@ export const GetScannerStatsResponse = zod.object({
 /**
  * @summary Search DEX pairs by symbol or contract address (DexScreener)
  */
+
+
+
 export const SearchPairsQueryParams = zod.object({
   "q": zod.coerce.string(),
-  "chain": zod.coerce.string().optional()
+  "chain": zod.coerce.string().optional(),
+  "pairId": zod.coerce.number().int().min(1).optional()
 })
 
 export const SearchPairsResponseItem = zod.object({
@@ -224,9 +228,13 @@ export const GetCandlesResponse = zod.array(GetCandlesResponseItem)
 /**
  * @summary List trading positions
  */
+
+
+
 export const ListPositionsQueryParams = zod.object({
   "status": zod.coerce.string().optional(),
-  "chain": zod.coerce.string().optional()
+  "chain": zod.coerce.string().optional(),
+  "pairId": zod.coerce.number().int().min(1).optional()
 })
 
 export const ListPositionsResponseItem = zod.object({
@@ -242,6 +250,9 @@ export const ListPositionsResponseItem = zod.object({
   "entryAmountUsd": zod.number(),
   "tokenAmountIn": zod.number(),
   "tokenAmountOut": zod.number(),
+  "remainingTokenAmountRaw": zod.string().nullish(),
+  "tokenDecimals": zod.number().nullish(),
+  "remainingCostBasisUsd": zod.number().nullish(),
   "entryTxHash": zod.string().nullish(),
   "capitalAtEntry": zod.number(),
   "riskPct": zod.number(),
@@ -261,6 +272,17 @@ export const ListPositionsResponseItem = zod.object({
   "notes": zod.string().nullish()
 })
 export const ListPositionsResponse = zod.array(ListPositionsResponseItem)
+
+
+/**
+ * @summary Read the authenticated user's live-trading gates
+ */
+export const GetTradingStatusResponse = zod.object({
+  "newTradesEnabled": zod.boolean(),
+  "closesEnabled": zod.boolean(),
+  "newTradeReason": zod.string().nullish(),
+  "closeReason": zod.string().nullish()
+})
 
 
 /**
@@ -288,8 +310,7 @@ export const ClosePositionResponse = zod.object({
 export const ExecuteSignalBody = zod.object({
   "pairId": zod.number(),
   "direction": zod.string(),
-  "tokenAddress": zod.string(),
-  "tokenDecimals": zod.number().optional()
+  "tokenAddress": zod.string()
 })
 
 export const ExecuteSignalResponse = zod.object({

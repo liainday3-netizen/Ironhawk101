@@ -38,6 +38,7 @@ import type {
   ScannerStats,
   SearchPairsParams,
   Signal,
+  TradingStatus,
   UpdateCapitalInput,
   WatchedPair
 } from './api.schemas';
@@ -850,6 +851,83 @@ export function useListPositions<TData = Awaited<ReturnType<typeof listPositions
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getListPositionsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetTradingStatusUrl = () => {
+
+
+
+
+  return `/api/trader/trading-status`
+}
+
+/**
+ * @summary Read the authenticated user's live-trading gates
+ */
+export const getTradingStatus = async ( options?: Parameters<typeof customFetch>[1]): Promise<TradingStatus> => {
+
+  return customFetch<TradingStatus>(getGetTradingStatusUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetTradingStatusQueryKey = () => {
+    return [
+    `/api/trader/trading-status`
+    ] as const;
+    }
+
+
+export const getGetTradingStatusQueryOptions = <TData = Awaited<ReturnType<typeof getTradingStatus>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTradingStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetTradingStatusQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getTradingStatus>>> = ({ signal }) => getTradingStatus({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getTradingStatus>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetTradingStatusQueryResult = NonNullable<Awaited<ReturnType<typeof getTradingStatus>>>
+export type GetTradingStatusQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Read the authenticated user's live-trading gates
+ */
+
+export function useGetTradingStatus<TData = Awaited<ReturnType<typeof getTradingStatus>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTradingStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetTradingStatusQueryOptions(options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

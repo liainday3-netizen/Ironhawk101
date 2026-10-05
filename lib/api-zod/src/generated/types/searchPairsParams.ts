@@ -9,4 +9,8 @@
 export type SearchPairsParams = {
 q: string;
 chain?: string;
+/**
+ * @minimum 1
+ */
+pairId?: number;
 };

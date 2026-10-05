@@ -17,10 +17,17 @@ const router = Router();
 router.get("/trader/positions", requireTradingAccess, async (req, res) => {
   const status = String(req.query.status ?? "all");
   const chain = String(req.query.chain ?? "all");
+  const pairId = req.query.pairId === undefined ? undefined : Number(req.query.pairId);
+
+  if (pairId !== undefined && (!Number.isInteger(pairId) || pairId <= 0)) {
+    res.status(400).json({ error: "pairId must be a positive integer" });
+    return;
+  }
 
   const conditions: any[] = [];
   if (status !== "all") conditions.push(eq(positionsTable.status, status));
   if (chain !== "all") conditions.push(eq(positionsTable.chain, chain));
+  if (pairId !== undefined) conditions.push(eq(positionsTable.pairId, pairId));
 
   const positions = await db
     .select()
@@ -67,6 +74,17 @@ router.get("/trader/positions", requireTradingAccess, async (req, res) => {
   );
 });
 
+router.get("/trader/trading-status", requireTradingAccess, (_req, res) => {
+  const newTradeReason = getTradingConfigurationError();
+  const closeReason = getCloseTradingConfigurationError();
+  res.json({
+    newTradesEnabled: newTradeReason === null,
+    closesEnabled: closeReason === null,
+    newTradeReason,
+    closeReason,
+  });
+});
+
 // POST /trader/positions/:id/close
 router.post("/trader/positions/:id/close", requireTradingAccess, async (req, res) => {
   const id = Number(req.params.id);
@@ -102,20 +120,16 @@ router.post("/trader/positions/:id/close", requireTradingAccess, async (req, res
 
 // POST /trader/execute
 router.post("/trader/execute", requireTradingAccess, async (req, res) => {
-  const { pairId, direction, tokenAddress, tokenDecimals } = req.body ?? {};
+  const { pairId, direction, tokenAddress } = req.body ?? {};
   const parsedPairId = Number(pairId);
   const normalizedDirection = String(direction ?? "").toUpperCase();
   const normalizedTokenAddress = typeof tokenAddress === "string" ? tokenAddress.trim() : "";
-  const parsedDecimals = tokenDecimals === undefined ? 18 : Number(tokenDecimals);
 
   if (
     !Number.isInteger(parsedPairId) ||
     parsedPairId <= 0 ||
     !["BUY", "SELL"].includes(normalizedDirection) ||
-    !normalizedTokenAddress ||
-    !Number.isInteger(parsedDecimals) ||
-    parsedDecimals < 0 ||
-    parsedDecimals > 18
+    !normalizedTokenAddress
   ) {
     res.status(400).json({ error: "pairId, direction, tokenAddress are required" });
     return;
@@ -125,7 +139,6 @@ router.post("/trader/execute", requireTradingAccess, async (req, res) => {
     pairId: parsedPairId,
     direction: normalizedDirection as "BUY" | "SELL",
     tokenAddress: normalizedTokenAddress,
-    tokenDecimals: parsedDecimals,
     obHigh: 0,
     obLow: 0,
     ltfMessage: "Manual execution",

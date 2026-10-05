@@ -11,15 +11,27 @@ import { eq, desc, sql } from "drizzle-orm";
 import { logger } from "./logger";
 import { getOHLCV, getPairInfo } from "./marketData";
 import { analyzeAsset } from "./microstructure";
+import { acquireAdvisoryLock } from "./advisoryLock";
 
 const SCAN_INTERVAL_MS = 30_000;
+const SCAN_LOCK_NAMESPACE = 4243;
 let scanTimer: NodeJS.Timeout | null = null;
 let isScanning = false;
 
 export async function runScanCycle(): Promise<void> {
   if (isScanning) return;
+  const release = await acquireAdvisoryLock(SCAN_LOCK_NAMESPACE, 1);
+  if (!release) return;
   isScanning = true;
+  try {
+    await runScanCycleLocked();
+  } finally {
+    isScanning = false;
+    await release();
+  }
+}
 
+async function runScanCycleLocked(): Promise<void> {
   try {
     const pairs = await db
       .select()
@@ -145,8 +157,6 @@ export async function runScanCycle(): Promise<void> {
     }
   } catch (err) {
     logger.error({ err }, "Scanner cycle error");
-  } finally {
-    isScanning = false;
   }
 }
 

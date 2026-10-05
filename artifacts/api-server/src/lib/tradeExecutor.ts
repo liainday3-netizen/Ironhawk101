@@ -31,7 +31,6 @@ export interface ExecuteSignalOptions {
   pairId: number;
   direction: "BUY" | "SELL";
   tokenAddress: string;
-  tokenDecimals?: number;
   obHigh: number;
   obLow: number;
   ltfMessage: string;

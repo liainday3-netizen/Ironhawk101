@@ -5,7 +5,8 @@
  * IronHawk DEX Matrix API
  * OpenAPI spec version: 0.2.0
  */
+import type { HealthStatusStatus } from './healthStatusStatus';
 
 export interface HealthStatus {
-  status: string;
+  status: HealthStatusStatus;
 }

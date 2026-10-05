@@ -129,6 +129,11 @@ paths:
           in: query
           schema:
             type: string
+        - name: pairId
+          in: query
+          schema:
+            type: integer
+            minimum: 1
       responses:
         "200":
           description: Search results
@@ -203,6 +208,11 @@ paths:
           in: query
           schema:
             type: string
+        - name: pairId
+          in: query
+          schema:
+            type: integer
+            minimum: 1
       responses:
         "200":
           description: Positions
@@ -212,6 +222,19 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/Position"
+
+  /trader/trading-status:
+    get:
+      operationId: getTradingStatus
+      tags: [trader]
+      summary: Read the authenticated user's live-trading gates
+      responses:
+        "200":
+          description: Trading gate status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TradingStatus"
 
   /trader/positions/{id}/close:
     post:
@@ -316,6 +339,7 @@ components:
       properties:
         status:
           type: string
+          enum: [EXECUTING, OPEN, PARTIAL, CLOSING, CLOSED, FAILED, RECONCILIATION_REQUIRED]
 
     WatchedPair:
       type: object
@@ -538,6 +562,12 @@ components:
           type: number
         tokenAmountOut:
           type: number
+        remainingTokenAmountRaw:
+          type: ["string", "null"]
+        tokenDecimals:
+          type: ["number", "null"]
+        remainingCostBasisUsd:
+          type: ["number", "null"]
         entryTxHash:
           type: ["string", "null"]
         capitalAtEntry:
@@ -603,8 +633,6 @@ components:
           type: string
         tokenAddress:
           type: string
-        tokenDecimals:
-          type: number
 
     ExecuteResult:
       type: object
@@ -619,6 +647,19 @@ components:
         positionSizeUsd:
           type: ["number", "null"]
         error:
+          type: ["string", "null"]
+
+    TradingStatus:
+      type: object
+      required: [newTradesEnabled, closesEnabled]
+      properties:
+        newTradesEnabled:
+          type: boolean
+        closesEnabled:
+          type: boolean
+        newTradeReason:
+          type: ["string", "null"]
+        closeReason:
           type: ["string", "null"]
 
     CapitalSummary:
