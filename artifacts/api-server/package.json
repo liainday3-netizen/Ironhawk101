@@ -10,8 +10,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@clerk/express": "^2.1.64",
-    "@clerk/shared": "^4.30.2",
+    "@clerk/express": "^2.1.75",
+    "@clerk/shared": "^4.38.0",
     "@solana/web3.js": "^1.98.4",
     "@workspace/api-zod": "workspace:*",
     "@workspace/db": "workspace:*",
