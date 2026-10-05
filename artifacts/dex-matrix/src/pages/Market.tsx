@@ -4,7 +4,7 @@ import {
   useGetTrendingPairs, getGetTrendingPairsQueryKey,
   useAddPair, getListPairsQueryKey, useListPairs,
 } from "@workspace/api-client-react";
-import type { MarketPair } from "@workspace/api-client-react";
+import type { MarketPair, WatchedPair } from "@workspace/api-client-react";
 import { Search, Telescope, Plus, Check } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -13,16 +13,16 @@ export default function Market() {
   const [chain, setChain] = useState<"ethereum" | "base" | "solana">("ethereum");
   const queryClient = useQueryClient();
 
-  const { data: watchedPairs = [] } = useListPairs({
+  const { data: watchedPairs = [] } = useListPairs<WatchedPair[]>({
     query: { queryKey: getListPairsQueryKey() }
   });
 
-  const { data: searchResults = [], isLoading: isSearchLoading } = useSearchPairs(
+  const { data: searchResults = [], isLoading: isSearchLoading } = useSearchPairs<MarketPair[]>(
     { q: query, chain },
     { query: { enabled: query.length >= 2, queryKey: getSearchPairsQueryKey({ q: query, chain }) } }
   );
 
-  const { data: trendingPairs = [], isLoading: isTrendingLoading } = useGetTrendingPairs(
+  const { data: trendingPairs = [], isLoading: isTrendingLoading } = useGetTrendingPairs<MarketPair[]>(
     { chain },
     { query: { enabled: query.length < 2, queryKey: getGetTrendingPairsQueryKey({ chain }) } }
   );

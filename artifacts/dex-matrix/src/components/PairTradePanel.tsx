@@ -9,6 +9,7 @@ import {
   useExecuteSignal,
   useGetTradingStatus,
   useListPositions,
+  type Position,
   type WatchedPair,
 } from "@workspace/api-client-react";
 
@@ -52,7 +53,7 @@ export function PairTradePanel({ pair }: { pair: WatchedPair }) {
     () => ({ pairId: pair.id, chain: pair.chain, status: "all" }),
     [pair.id, pair.chain],
   );
-  const positionsQuery = useListPositions(positionParams, {
+  const positionsQuery = useListPositions<Position[]>(positionParams, {
     query: {
       queryKey: getListPositionsQueryKey(positionParams),
       enabled: pair.id > 0,

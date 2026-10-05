@@ -29,7 +29,7 @@ const REGIME_CONFIG: Record<string, { color: string; label: string }> = {
 };
 
 export default function Home() {
-  const { data: pairs = [], isLoading } = useListPairs({
+  const { data: pairs = [], isLoading } = useListPairs<WatchedPair[]>({
     query: { refetchInterval: 10000, queryKey: getListPairsQueryKey() }
   });
 

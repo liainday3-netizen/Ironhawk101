@@ -1,5 +1,6 @@
 import { useRoute, useLocation } from "wouter";
 import { useGetCandles, getGetCandlesQueryKey, useListPairs, getListPairsQueryKey, useRemovePair } from "@workspace/api-client-react";
+import type { Candle, WatchedPair } from "@workspace/api-client-react";
 import { ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from "recharts";
 import { format } from "date-fns";
 import { ArrowLeft, Trash2, Activity, Target, TrendingUp, TrendingDown } from "lucide-react";
@@ -110,10 +111,10 @@ export default function PairDetail() {
 
   const [timeframe, setTimeframe] = useState<"1m" | "5m" | "15m" | "1h" | "4h" | "1d">("15m");
 
-  const { data: pairs = [] } = useListPairs({ query: { queryKey: getListPairsQueryKey() } });
+  const { data: pairs = [] } = useListPairs<WatchedPair[]>({ query: { queryKey: getListPairsQueryKey() } });
   const pair = pairs.find(p => p.pairAddress === pairAddress && p.chain === chain);
 
-  const { data: candles = [], isLoading } = useGetCandles(
+  const { data: candles = [], isLoading } = useGetCandles<Candle[]>(
     { pairAddress: pairAddress!, chain: chain as any, timeframe },
     { query: { enabled: !!pairAddress, queryKey: getGetCandlesQueryKey({ pairAddress: pairAddress!, chain: chain as any, timeframe }) } }
   );
