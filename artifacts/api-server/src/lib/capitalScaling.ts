@@ -99,6 +99,20 @@ export interface AdaptiveRiskContext {
   executionGuard?: string;
 }
 
+/**
+ * Clamps a 0-100 quality score into a 0.5-1.0 sizing multiplier.
+ *
+ * Absent is NOT the same as zero. A caller that never measured confidence
+ * (or received no context at all) should size at the neutral 1.0; a caller
+ * that measured it and got 0 must size at the 0.5 floor. Using truthiness
+ * here would invert exactly that distinction, since 0 is falsy — a signal
+ * scoring zero would silently receive the maximum multiplier.
+ */
+function scoreToMultiplier(score: number | undefined): number {
+  if (typeof score !== "number" || !Number.isFinite(score)) return 1;
+  return Math.max(0.5, Math.min(1, score / 100));
+}
+
 export async function calculatePositionSize(
   chain: string,
   context: AdaptiveRiskContext = {},
@@ -111,12 +125,8 @@ export async function calculatePositionSize(
     context.marketRegime === "EXTREME" ? 0 :
     context.marketRegime === "VOLATILE" ? 0.5 :
     context.marketRegime === "CALM" ? 0.9 : 1;
-  const confidenceMultiplier = context.confidenceScore
-    ? Math.max(0.5, Math.min(1, context.confidenceScore / 100))
-    : 1;
-  const liquidityMultiplier = context.liquidityScore
-    ? Math.max(0.5, Math.min(1, context.liquidityScore / 100))
-    : 1;
+  const confidenceMultiplier = scoreToMultiplier(context.confidenceScore);
+  const liquidityMultiplier = scoreToMultiplier(context.liquidityScore);
   const riskPct = baseRiskPct * regimeMultiplier * confidenceMultiplier * liquidityMultiplier;
   const rawSize = config.currentCapitalUsd * (riskPct / 100);
   const positionSizeUsd = Math.max(
