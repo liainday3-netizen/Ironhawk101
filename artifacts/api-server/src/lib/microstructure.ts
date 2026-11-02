@@ -6,6 +6,26 @@
  *   - LTF Fractal CHoCH with Volume Z-Score confirmation
  *   - Daily bias filter
  *   - London/NY killzone session filter
+ *
+ * DELIBERATE DIVERGENCE FROM THE MQL5 ORIGINAL — order-block selection order.
+ *
+ * The EA scans its HTF window forward (`for i = 2; i < InpHistoryBars - 2`)
+ * over series-ordered arrays and breaks on the FIRST match, which selects the
+ * OLDEST qualifying block in the window. `detectOrderBlock` below scans
+ * backward and breaks on the first match, selecting the NEWEST.
+ *
+ * This is intentional, not a translation slip: with a 200-bar H4 window the
+ * EA can act on structure from ~33 days ago that the asset has long since
+ * left behind. The newer block is the one price is actually interacting with.
+ * Any behavioural comparison against the .mq5 source must account for this,
+ * because the two will disagree on every symbol that has more than one
+ * qualifying block in its window.
+ *
+ * Everything else is a faithful port. Verified against the source:
+ *   - OB engulfing rule + third-bar confirmation, both directions
+ *   - Daily bias read from D1 bar index 1, not the forming bar
+ *   - Volume z-score baseline over bars 1..49 (excludes the tested bar)
+ *   - Killzone boundaries, inclusive at both edges
  */
 
 import { OHLCVCandle } from "./marketData";
@@ -53,11 +73,13 @@ const LONDON_END = 12;
 const NY_START = 13;
 const NY_END = 17;
 
+/**
+ * Finds the most recent qualifying order block. See the file header — the
+ * backward scan is a deliberate divergence from the EA's forward scan.
+ */
 export function detectOrderBlock(htfCandles: OHLCVCandle[]): OrderBlock | null {
   if (htfCandles.length < 5) return null;
 
-  // Prefer the most recent valid block; old blocks should not keep a market
-  // pinned to stale structure after the asset has moved on.
   for (let i = htfCandles.length - 3; i >= 2; i--) {
     const prev = htfCandles[i + 1];
     const curr = htfCandles[i];
