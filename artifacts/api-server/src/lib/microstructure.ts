@@ -162,10 +162,16 @@ export function getAdaptiveMetrics(
     volatilityRatio >= 1.45 || atrPct >= 4 ? "VOLATILE" :
     volatilityRatio <= 0.7 ? "CALM" : "NORMAL";
 
-  // Unknown liquidity never receives an execution pass. It can still be
-  // displayed for research, but cannot trigger a live trade.
+  // `context.liquidityUsd` being absent means the market-data lookup failed
+  // or was never attempted — that is NOT the same statement as "this pool is
+  // thin". Both must block execution, but they are reported distinctly so a
+  // transient upstream outage is not silently recorded as a liquidity
+  // verdict against the asset. In particular, conflating the two would feed
+  // a bogus liquidityScore into the confidenceScore and into the signals
+  // table, poisoning any later analysis of why a trade was skipped.
+  const liquidityKnown = typeof context.liquidityUsd === "number" && context.liquidityUsd > 0;
   const liquidityUsd = context.liquidityUsd ?? 0;
-  const liquidityScore = liquidityUsd > 0
+  const liquidityScore = liquidityKnown
     ? clamp((Math.log10(liquidityUsd + 1) / 6) * 100, 0, 100)
     : 0;
 
@@ -177,16 +183,26 @@ export function getAdaptiveMetrics(
     marketRegime === "EXTREME" ? 0 :
     marketRegime === "VOLATILE" ? 10 :
     marketRegime === "CALM" ? 4 : 0;
-  const confidenceScore = clamp(
-    100 - volatilityPenalty - (liquidityScore < MIN_LIQUIDITY_SCORE_TO_EXECUTE ? 20 : 0),
-    0,
-    100,
-  );
 
   let executionGuard = "ADAPTIVE_GUARDS_CLEAR";
   if (marketRegime === "EXTREME") executionGuard = "EXTREME_VOLATILITY";
+  else if (!liquidityKnown) executionGuard = "LIQUIDITY_UNKNOWN";
   else if (liquidityScore < MIN_LIQUIDITY_SCORE_TO_EXECUTE) executionGuard = "THIN_LIQUIDITY";
-  else if (confidenceScore < MIN_CONFIDENCE_TO_EXECUTE) executionGuard = "LOW_CONFIDENCE";
+
+  // Confidence is only meaningfully computable when liquidity is known. When
+  // it is not, report 0 rather than a number derived from a missing input —
+  // a caller must not be able to read "confidence 80" off a failed lookup.
+  const confidenceScore = !liquidityKnown
+    ? 0
+    : clamp(
+        100 - volatilityPenalty - (liquidityScore < MIN_LIQUIDITY_SCORE_TO_EXECUTE ? 20 : 0),
+        0,
+        100,
+      );
+
+  if (liquidityKnown && executionGuard === "ADAPTIVE_GUARDS_CLEAR" && confidenceScore < MIN_CONFIDENCE_TO_EXECUTE) {
+    executionGuard = "LOW_CONFIDENCE";
+  }
 
   return {
     marketRegime,
@@ -335,7 +351,7 @@ export function analyzeAsset(
       obType: ob.type,
       obHigh: ob.high,
       obLow: ob.low,
-        ...adaptive,
+      ...adaptive,
     };
   }
 
