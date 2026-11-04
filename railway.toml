@@ -1,0 +1,28 @@
+# Railway deployment for the IronHawk DEX Matrix monorepo.
+#
+# The server must run as a single always-on instance. scanner.ts drives the
+# scan loop with setInterval and uses Postgres advisory locks (namespace 4243
+# for scans, 4242 for trades) to serialise work — both assume exactly one
+# long-lived process sharing one database. Do not enable autoscaling here:
+# the app is safe with two instances (the locks hold) but there is no benefit,
+# and a serverless host that suspends the process silently stops scanning.
+
+[build]
+buildCommand = "pnpm install --frozen-lockfile && pnpm run build"
+
+[deploy]
+startCommand = "pnpm --filter @workspace/api-server run start"
+
+# Restart on crash, but cap the attempts — a crash loop that restarts forever
+# burns through the wallet if the failure is in the trading path. Ten attempts
+# is enough to ride out a transient RPC or database blip without masking a
+# real, repeating fault.
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
+
+# Live trading is deliberately NOT configured here. Per the project's security
+# model, TRADING_ENABLED and TRADING_CLOSES_ENABLED must be set as service
+# variables in the Railway dashboard, and left unset until wallet
+# configuration, market-data safeguards and owner access have been verified.
+# With them unset the server boots, scans, records signals, and refuses every
+# trade — which is the intended first deployment.
