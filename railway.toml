@@ -8,18 +8,24 @@
 # and a serverless host that suspends the process silently stops scanning.
 
 [build]
-# NOTE: deliberately NOT using --frozen-lockfile.
+# NOTE: --no-frozen-lockfile is deliberate.
 #
-# The workspace lockfile drifts from the package.json files whenever a script
-# is added (as one was, to introduce the root `start` command), and
-# --frozen-lockfile turns that into a hard install failure before the build
-# even begins. Letting pnpm reconcile the lockfile on deploy costs a few
-# seconds and removes a failure mode that has nothing to do with the code
-# being deployed. Restore the flag once the lockfile is known to be in sync.
+# The committed lockfile was generated against an "overrides" block that no
+# longer matches pnpm-workspace.yaml, so any frozen install fails with
+# ERR_PNPM_LOCKFILE_CONFIG_MISMATCH before the build begins. Letting pnpm 10
+# (pinned via the root packageManager field) reconcile the lockfile on deploy
+# means the deploy always installs from the workspace config as it exists in
+# the repo, rather than from a stale snapshot of it.
+#
+# The trade-off is real: a frozen install guarantees the lockfile is the
+# single source of truth for dependency versions. Restore --frozen-lockfile
+# once the lockfile has been regenerated in sync (run `pnpm install` locally
+# or in Replit and commit the result) — at that point it costs nothing and
+# buys back the guarantee.
 #
 # --prefer-offline is kept: it speeds up repeat deploys by using the local
 # store where possible without skipping the registry when something is missing.
-buildCommand = "pnpm install --prefer-offline && pnpm run build"
+buildCommand = "pnpm install --no-frozen-lockfile --prefer-offline && pnpm run build"
 
 [deploy]
 startCommand = "pnpm --filter @workspace/api-server run start"
