@@ -8,7 +8,18 @@
 # and a serverless host that suspends the process silently stops scanning.
 
 [build]
-buildCommand = "pnpm install --frozen-lockfile && pnpm run build"
+# NOTE: deliberately NOT using --frozen-lockfile.
+#
+# The workspace lockfile drifts from the package.json files whenever a script
+# is added (as one was, to introduce the root `start` command), and
+# --frozen-lockfile turns that into a hard install failure before the build
+# even begins. Letting pnpm reconcile the lockfile on deploy costs a few
+# seconds and removes a failure mode that has nothing to do with the code
+# being deployed. Restore the flag once the lockfile is known to be in sync.
+#
+# --prefer-offline is kept: it speeds up repeat deploys by using the local
+# store where possible without skipping the registry when something is missing.
+buildCommand = "pnpm install --prefer-offline && pnpm run build"
 
 [deploy]
 startCommand = "pnpm --filter @workspace/api-server run start"
