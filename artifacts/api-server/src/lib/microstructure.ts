@@ -26,6 +26,19 @@
  *   - Daily bias read from D1 bar index 1, not the forming bar
  *   - Volume z-score baseline over bars 1..49 (excludes the tested bar)
  *   - Killzone boundaries, inclusive at both edges
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * THRESHOLDS ARE UNVALIDATED — READ BEFORE TUNING
+ * ─────────────────────────────────────────────────────────────────────────
+ * The volume z-score cutoffs (1.2 / 1.5 / 1.8 / 2.2 by regime) and the stop
+ * multiple (2.2x ATR, clamped 1.5–12%) are hand-chosen, not fitted to any
+ * recorded sample of this instrument set. They encode an assumption about how
+ * much volume confirms a break in each volatility regime, and nothing in this
+ * repository tests that assumption. Do not tune them by eye against recent
+ * results — that is how a strategy gets fitted to noise. Measure first (see
+ * the validation plan), then change one threshold at a time.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
  */
 
 import { OHLCVCandle } from "./marketData";
@@ -55,6 +68,21 @@ export interface MicrostructureResult {
   obHigh: number | null;
   obLow: number | null;
   marketRegime: "CALM" | "NORMAL" | "VOLATILE" | "EXTREME" | "UNKNOWN";
+  /**
+   * Market-conditions index (0-100).
+   *
+   * NOT a probability of profit and NOT a measure of setup quality. It is a
+   * function of current volatility regime and pool liquidity only:
+   *
+   *     100 - volatilityPenalty - thinLiquidityPenalty
+   *
+   * so a high value means "calm, liquid market right now", not "this trade is
+   * likely to work". It is used as a position-size multiplier, where that
+   * meaning is the correct one — it scales risk down in poor conditions. It
+   * must not be read, displayed or used as an expected-success figure. The
+   * field keeps its existing `confidenceScore` name for schema compatibility;
+   * `conditionsScore` is exported as the preferred alias.
+   */
   confidenceScore: number;
   atrPct: number;
   volatilityRatio: number;
@@ -64,7 +92,14 @@ export interface MicrostructureResult {
   suggestedStopLossPct: number;
 }
 
-const MIN_CONFIDENCE_TO_EXECUTE = 65;
+/** Preferred name for the market-conditions index. See `confidenceScore`. */
+export type ConditionsIndex = MicrostructureResult["confidenceScore"];
+
+/**
+ * Minimum conditions index required to execute. This gates OUT of trading in
+ * poor conditions; it is not a confidence threshold about the setup.
+ */
+const MIN_CONDITIONS_INDEX_TO_EXECUTE = 65;
 const MIN_LIQUIDITY_SCORE_TO_EXECUTE = 35;
 const USE_DAILY_BIAS = true;
 const USE_KILLZONES = true;
@@ -112,6 +147,14 @@ export function getDailyBias(d1Candles: OHLCVCandle[]): number {
   return 0;
 }
 
+/**
+ * Killzone filter — 08:00–12:00 and 13:00–17:00 UTC, inclusive at both edges.
+ *
+ * This removes a large share of the trading day from consideration. If it is
+ * ever reconsidered, the way to judge it is to split recorded signals by
+ * whether they fell inside a killzone and compare forward outcomes; removing
+ * the filter before measuring it discards information rather than risk.
+ */
 export function isInKillzone(): boolean {
   if (!USE_KILLZONES) return true;
   const hour = new Date().getUTCHours();
@@ -129,6 +172,7 @@ export interface MarketContext {
 
 export interface AdaptiveMetrics {
   marketRegime: "CALM" | "NORMAL" | "VOLATILE" | "EXTREME" | "UNKNOWN";
+  /** Market-conditions index. See MicrostructureResult.confidenceScore. */
   confidenceScore: number;
   atrPct: number;
   volatilityRatio: number;
@@ -189,7 +233,7 @@ export function getAdaptiveMetrics(
   // thin". Both must block execution, but they are reported distinctly so a
   // transient upstream outage is not silently recorded as a liquidity
   // verdict against the asset. In particular, conflating the two would feed
-  // a bogus liquidityScore into the confidenceScore and into the signals
+  // a bogus liquidityScore into the conditions index and into the signals
   // table, poisoning any later analysis of why a trade was skipped.
   const liquidityKnown = typeof context.liquidityUsd === "number" && context.liquidityUsd > 0;
   const liquidityUsd = context.liquidityUsd ?? 0;
@@ -211,9 +255,9 @@ export function getAdaptiveMetrics(
   else if (!liquidityKnown) executionGuard = "LIQUIDITY_UNKNOWN";
   else if (liquidityScore < MIN_LIQUIDITY_SCORE_TO_EXECUTE) executionGuard = "THIN_LIQUIDITY";
 
-  // Confidence is only meaningfully computable when liquidity is known. When
+  // The index is only meaningfully computable when liquidity is known. When
   // it is not, report 0 rather than a number derived from a missing input —
-  // a caller must not be able to read "confidence 80" off a failed lookup.
+  // a caller must not be able to read "index 80" off a failed lookup.
   const confidenceScore = !liquidityKnown
     ? 0
     : clamp(
@@ -222,7 +266,7 @@ export function getAdaptiveMetrics(
         100,
       );
 
-  if (liquidityKnown && executionGuard === "ADAPTIVE_GUARDS_CLEAR" && confidenceScore < MIN_CONFIDENCE_TO_EXECUTE) {
+  if (liquidityKnown && executionGuard === "ADAPTIVE_GUARDS_CLEAR" && confidenceScore < MIN_CONDITIONS_INDEX_TO_EXECUTE) {
     executionGuard = "LOW_CONFIDENCE";
   }
 
