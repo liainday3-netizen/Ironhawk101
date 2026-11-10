@@ -1,6 +1,15 @@
 /**
  * Market data fetcher using DexScreener and GeckoTerminal public APIs.
- * No API keys required.
+ *
+ * Both are keyless by default, which is fine for development and for a single
+ * low-frequency scanner. Under a 30-second cycle across many pairs it is not:
+ * the public tiers rate-limit, and a rate-limited fetch looks identical to a
+ * pair with no data, so the engine degrades by silently producing no signals
+ * rather than by raising an error anyone would see.
+ *
+ * Set DEXSCREENER_API_KEY and/or GECKOTERMINAL_API_KEY to use the keyed tiers.
+ * The headers are omitted entirely when a key is absent, so behaviour without
+ * keys is exactly as before.
  */
 
 export interface OHLCVCandle {
@@ -51,6 +60,24 @@ const GECKO_TIMEFRAME_MAP: Record<string, { aggregate: string; period: string }>
   "1d": { aggregate: "day", period: "1" },
 };
 
+function geckoHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {
+    Accept: "application/json;version=20230302",
+  };
+  if (process.env.GECKOTERMINAL_API_KEY) {
+    headers["x-cg-demo-api-key"] = process.env.GECKOTERMINAL_API_KEY;
+  }
+  return headers;
+}
+
+function dexScreenerHeaders(): Record<string, string> {
+  const headers: Record<string, string> = { Accept: "application/json" };
+  if (process.env.DEXSCREENER_API_KEY) {
+    headers["X-API-KEY"] = process.env.DEXSCREENER_API_KEY;
+  }
+  return headers;
+}
+
 function parseDexScreenerPair(p: any, chain: string): DexPair {
   return {
     pairAddress: p.pairAddress ?? "",
@@ -70,7 +97,10 @@ function parseDexScreenerPair(p: any, chain: string): DexPair {
 
 export async function searchDexPairs(q: string, chain: string = "all"): Promise<DexPair[]> {
   const url = `https://api.dexscreener.com/latest/dex/search/?q=${encodeURIComponent(q)}`;
-  const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+  const res = await fetch(url, {
+    headers: dexScreenerHeaders(),
+    signal: AbortSignal.timeout(8000),
+  });
   if (!res.ok) return [];
   const data = (await res.json()) as { pairs?: unknown[] };
   const pairs: unknown[] = data.pairs ?? [];
@@ -84,7 +114,7 @@ export async function getTrendingPairs(chain: string = "ethereum"): Promise<DexP
   const geckoNetwork = GECKO_NETWORK_MAP[chain] ?? "eth";
   const url = `https://api.geckoterminal.com/api/v2/networks/${geckoNetwork}/trending_pools?page=1`;
   const res = await fetch(url, {
-    headers: { Accept: "application/json;version=20230302" },
+    headers: geckoHeaders(),
     signal: AbortSignal.timeout(8000),
   });
   if (!res.ok) {
@@ -114,7 +144,10 @@ export async function getTrendingPairs(chain: string = "ethereum"): Promise<DexP
 export async function getPairInfo(pairAddress: string, chain: string): Promise<DexPair | null> {
   const chainId = CHAIN_MAP[chain] ?? chain;
   const url = `https://api.dexscreener.com/latest/dex/pairs/${chainId}/${pairAddress}`;
-  const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+  const res = await fetch(url, {
+    headers: dexScreenerHeaders(),
+    signal: AbortSignal.timeout(8000),
+  });
   if (!res.ok) return null;
   const data = (await res.json()) as { pair?: any; pairs?: any[] };
   const pair = data.pair ?? data.pairs?.[0];
@@ -132,7 +165,7 @@ export async function getOHLCV(
   const url = `https://api.geckoterminal.com/api/v2/networks/${geckoNetwork}/pools/${pairAddress}/ohlcv/${tf.aggregate}?aggregate=${tf.period}&limit=200&currency=usd&token=base`;
 
   const res = await fetch(url, {
-    headers: { Accept: "application/json;version=20230302" },
+    headers: geckoHeaders(),
     signal: AbortSignal.timeout(8000),
   });
   if (!res.ok) return [];

@@ -56,7 +56,14 @@ app.use(express.urlencoded({ extended: true }));
 app.use("/api", healthRouter);
 app.use("/api", requireAuth, router);
 
-// Start the IronHawk scanner after the server is initialized
+// Start the IronHawk scanner after the server is initialized.
+//
+// The scanner runs in every configuration, including monitor mode: that is
+// deliberate, because a deployment with trading unset is the way to collect
+// the signal history that any decision to go live depends on. What changes
+// with the environment is whether signals can become orders, not whether the
+// engine observes the market. beginTradingSession reports which mode this
+// process is in and refuses to start if trading is armed but misconfigured.
 startScanner();
 
 export default app;

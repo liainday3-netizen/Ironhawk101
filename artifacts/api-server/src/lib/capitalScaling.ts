@@ -5,13 +5,28 @@
  * automatically scales up in proportion to current capital.
  *
  * Scaling tiers (auto-applied as capital grows):
- *   < $50       → MICRO:        10% risk/trade, 1 concurrent
+ *   < $50       → MICRO:         3% risk/trade, 1 concurrent
  *   $50–$200    → STARTER:       5% risk/trade, 2 concurrent
  *   $200–$500   → CONSERVATIVE:  3% risk/trade, 2 concurrent
  *   $500–$5k    → STANDARD:      3% risk/trade, 3 concurrent
  *   $5k–$25k    → GROWTH:        4% risk/trade, 5 concurrent
  *   $25k–$100k  → AGGRESSIVE:    5% risk/trade, 6 concurrent
  *   > $100k     → INSTITUTIONAL: 5% risk/trade, 8 concurrent
+ *
+ * RISK-PERCENTAGE NOTE
+ * ────────────────────
+ * MICRO previously carried 10% risk per trade, the highest value in the whole
+ * table and attached to the smallest account — the one least able to absorb a
+ * losing streak. At $10 of capital a 10% figure is $1, which is below the
+ * useful size for any DEX trade once gas is paid, so the tier was mostly
+ * theoretical at the bottom; but the same 10% would have followed capital
+ * upward if a small account grew quickly, since the tier table is indexed on
+ * capital and not on history. A 3% MICRO starting point keeps a young account
+ * alive long enough to gather the sample any decision depends on.
+ *
+ * No percentage in this table is validated. These are risk ceilings chosen to
+ * bound loss, not expectations of return. See the validation plan before
+ * changing them.
  */
 
 import { db, capitalConfigTable, positionsTable } from "@workspace/db";
@@ -26,6 +41,7 @@ export interface PositionSizing {
   capitalAtEntry: number;
   scalingTier: string;
   marketRegime: string;
+  /** Market-conditions index (0-100), NOT a probability of profit. */
   confidenceScore: number;
   liquidityScore: number;
   executionGuard: string;
@@ -54,11 +70,20 @@ function getScalingTier(capital: number): {
   if (capital >= 500)     return { riskPct: 3, maxConcurrent: 3, label: "STANDARD" };
   if (capital >= 200)     return { riskPct: 3, maxConcurrent: 2, label: "CONSERVATIVE" };
   if (capital >= 50)      return { riskPct: 5, maxConcurrent: 2, label: "STARTER" };
-  return                         { riskPct: 10, maxConcurrent: 1, label: "MICRO" };
+  return                         { riskPct: 3, maxConcurrent: 1, label: "MICRO" };
 }
 
 export const MIN_CAPITAL_USD = 10;
 export const MIN_POSITION_USD = 1;
+
+/**
+ * Hard ceiling on a single live position, enforced independently of the
+ * per-chain configuration. The stored maxPositionUsd default is set to this
+ * same value so the configured ceiling and the enforced one agree; previously
+ * the stored default was $50,000 while this constant capped execution at
+ * $1,000, meaning the effective limit was the lower number and the higher one
+ * was a misleading piece of configuration.
+ */
 export const MAX_LIVE_POSITION_USD = 1_000;
 
 export async function getOrCreateCapitalConfig(chain: string) {
@@ -81,7 +106,7 @@ export async function getOrCreateCapitalConfig(chain: string) {
       maxRiskPct: 10,
       stopLossPct: 5,
       tpLevels: JSON.stringify(DEFAULT_TP_LEVELS),
-      maxPositionUsd: 50_000,
+      maxPositionUsd: MAX_LIVE_POSITION_USD,
       maxConcurrentPositions: tier.maxConcurrent,
       autoExecute: false,
     })
@@ -92,6 +117,7 @@ export async function getOrCreateCapitalConfig(chain: string) {
 
 export interface AdaptiveRiskContext {
   marketRegime?: string;
+  /** Market-conditions index (0-100), NOT a probability of profit. */
   confidenceScore?: number;
   liquidityScore?: number;
   suggestedStopLossPct?: number;
@@ -102,7 +128,7 @@ export interface AdaptiveRiskContext {
 /**
  * Clamps a 0-100 quality score into a 0.5-1.0 sizing multiplier.
  *
- * Absent is NOT the same as zero. A caller that never measured confidence
+ * Absent is NOT the same as zero. A caller that never measured the score
  * (or received no context at all) should size at the neutral 1.0; a caller
  * that measured it and got 0 must size at the 0.5 floor. Using truthiness
  * here would invert exactly that distinction, since 0 is falsy — a signal
@@ -178,6 +204,15 @@ export async function recordTradeResult(
   );
 }
 
+/**
+ * May a new position be opened on this chain?
+ *
+ * The concurrency count deliberately includes statuses that represent live or
+ * unresolved exposure, not only OPEN and PARTIAL: a position in EXECUTING,
+ * CLOSING or RECONCILIATION_REQUIRED is capital that is already committed or
+ * that may be, and counting only the settled statuses would let the engine
+ * open past its own limit whenever reconciliation lagged.
+ */
 export async function canOpenPosition(
   chain: string,
   options: { requireAutoExecute?: boolean } = {},
