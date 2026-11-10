@@ -1,11 +1,25 @@
-import { Router, type IRouter } from "express";
-import { HealthCheckResponse } from "@workspace/api-zod";
+import { Router } from "express";
+import { isTradingEnabled, areTradingClosesEnabled } from "../lib/tradingGuard";
 
-const router: IRouter = Router();
+const router = Router();
 
-router.get("/healthz", (_req, res) => {
-  const data = HealthCheckResponse.parse({ status: "ok" });
-  res.json(data);
+/**
+ * Public deployment probe. Deliberately unauthenticated, so it reports
+ * whether trading is armed but never any data about positions, capital or
+ * signals.
+ */
+router.get("/health", (_req, res) => {
+  const entriesEnabled = isTradingEnabled();
+  const exitsEnabled = areTradingClosesEnabled();
+  res.json({
+    status: "ok",
+    // MONITOR until TRADING_ENABLED=true and a non-empty owner allowlist are
+    // both configured. A running instance in MONITOR scans and records
+    // signals but places no orders.
+    mode: entriesEnabled ? "LIVE" : "MONITOR",
+    entriesEnabled,
+    exitsEnabled,
+  });
 });
 
 export default router;

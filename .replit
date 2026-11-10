@@ -2,7 +2,12 @@ modules = ["nodejs-24", "postgresql-16"]
 
 [deployment]
 router = "application"
-deploymentTarget = "autoscale"
+# Persistent VM, not autoscale. scanner.ts drives the scan loop with
+# setInterval and uses Postgres advisory locks (namespace 4243 for scans,
+# 4242 for trades) to serialise work — both assume exactly one long-lived
+# process sharing one database. An autoscaling or serverless target that
+# suspends the process stops scanning without raising an error.
+deploymentTarget = "vm"
 
 [deployment.postBuild]
 args = ["pnpm", "store", "prune"]

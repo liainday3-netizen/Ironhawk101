@@ -7,7 +7,7 @@ import {
   calculatePositionSize,
   MIN_CAPITAL_USD,
 } from "../lib/capitalScaling";
-import { executeSignal, closePosition } from "../lib/tradeExecutor";
+import { executeSignal, closePosition, reconcilePendingPositions } from "../lib/tradeExecutor";
 import { requireTradingAccess } from "../middlewares/auth";
 import { getTradingConfigurationError, getCloseTradingConfigurationError } from "../lib/tradingGuard";
 
@@ -83,6 +83,13 @@ router.get("/trader/trading-status", requireTradingAccess, (_req, res) => {
     newTradeReason,
     closeReason,
   });
+});
+
+// POST /trader/reconcile — sweep positions whose entry was broadcast but never
+// verified. Safe to call at any time; does nothing when there is no residue.
+router.post("/trader/reconcile", requireTradingAccess, async (_req, res) => {
+  const result = await reconcilePendingPositions();
+  res.json(result);
 });
 
 // POST /trader/positions/:id/close
@@ -294,6 +301,14 @@ router.get("/trader/performance", requireTradingAccess, async (_req, res) => {
     .from(positionsTable)
     .where(inArray(positionsTable.status, ["OPEN", "PARTIAL"]));
 
+  // Surface unresolved positions distinctly. These are executions whose result
+  // was never verified, so they are excluded from realised P&L above and must
+  // not be mistaken for clean open exposure.
+  const unresolvedCount = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(positionsTable)
+    .where(eq(positionsTable.status, "RECONCILIATION_REQUIRED"));
+
   const bestChain = chains.length > 0
     ? chains.sort((a, b) => b.totalReturnPct - a.totalReturnPct)[0].chain
     : null;
@@ -305,6 +320,7 @@ router.get("/trader/performance", requireTradingAccess, async (_req, res) => {
     totalTrades,
     winRate,
     openPositions: openCount[0]?.count ?? 0,
+    reconciliationRequired: unresolvedCount[0]?.count ?? 0,
     bestChain,
   });
 });
